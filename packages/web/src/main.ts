@@ -142,12 +142,17 @@ function messageRoleClass(msg: { role?: string; customType?: string }): string {
 	return msg.role ?? "unknown";
 }
 
+const USER_AVATAR = "U";
+const ASSISTANT_AVATAR = "π";
+
 function renderLogin(root: HTMLElement): void {
 	const stored = loadStored();
 	root.innerHTML = "";
 	const shell = el("div", "connect-shell");
 
 	const hero = el("div", "connect-hero");
+	const logoSymbol = Object.assign(el("div", "logo-symbol"), { textContent: "π" });
+	hero.appendChild(logoSymbol);
 	hero.appendChild(Object.assign(el("p", "eyebrow"), { textContent: "LAN workspace" }));
 	hero.appendChild(Object.assign(el("h1"), { textContent: "pi Hub" }));
 	shell.appendChild(hero);
@@ -156,7 +161,7 @@ function renderLogin(root: HTMLElement): void {
 	panel.appendChild(
 		Object.assign(el("p", "hint"), {
 			textContent:
-				"Sign in to the hub, then pick a room. Open from the same host as pi-hub (e.g. http://localhost:3141). Token from .pi/hub.json.",
+				"Sign in to the hub. Open from the same host as pi-hub (e.g. http://localhost:3141). Token from .pi/hub.json.",
 		}),
 	);
 
@@ -205,7 +210,7 @@ function renderLogin(root: HTMLElement): void {
 				err.classList.add("hidden");
 				saveSession(session, stored.roomId);
 				transitionView(root, () =>
-					renderRoomLobby(root, session, client, stored.roomId, () => {
+					renderWorkspace(root, session, client, stored.roomId, () => {
 						client.disconnect();
 						transitionView(root, () => renderLogin(root));
 					}),
@@ -224,63 +229,115 @@ function renderLogin(root: HTMLElement): void {
 	root.appendChild(shell);
 }
 
-function renderRoomLobby(
+function renderWorkspace(
 	root: HTMLElement,
 	session: StoredSession,
 	client: HubClient,
-	initialLastRoomId: string | undefined,
+	initialRoomId: string | undefined,
 	onSignOut: () => void,
 ): void {
 	root.innerHTML = "";
-	const shell = el("div", "lobby-shell");
+	const shell = el("div", "workspace-shell");
 
-	const header = el("header", "lobby-header");
-	const title = el("h1", "lobby-title");
-	title.textContent = "Rooms";
-	const user = el("span", "lobby-user");
+	const topHeader = el("header", "workspace-header");
+	const brand = el("span", "workspace-brand");
+	brand.textContent = "pi Hub";
+
+	const rolesBtn = el("button", "secondary-btn");
+	rolesBtn.type = "button";
+	rolesBtn.textContent = "Roles";
+	rolesBtn.onclick = () => showRoleLibraryModal();
+	topHeader.appendChild(rolesBtn);
+
+	const user = el("span", "workspace-user");
 	user.textContent = session.displayName;
 	const signOutBtn = el("button", "secondary-btn");
 	signOutBtn.type = "button";
 	signOutBtn.textContent = "Sign out";
 	signOutBtn.onclick = () => onSignOut();
-	header.append(title, user, signOutBtn);
-	shell.appendChild(header);
+	topHeader.append(brand, rolesBtn, user, signOutBtn);
+	shell.appendChild(topHeader);
 
-	const err = el("div", "error-banner hidden");
-	shell.appendChild(err);
+	const body = el("div", "workspace-layout");
+	const roomRailBackdrop = el("div", "room-rail-backdrop");
+	const roomRail = el("aside", "room-rail");
+	const chatColumn = el("div", "chat-column");
+	body.append(roomRailBackdrop, roomRail, chatColumn);
+	shell.appendChild(body);
+	root.appendChild(shell);
 
-	const createRow = el("div", "lobby-create-row");
+	const railHeader = el("div", "room-rail-header");
+	railHeader.appendChild(Object.assign(el("h2", "room-rail-title"), { textContent: "Rooms" }));
+
+	const roomToolbar = el("div", "room-toolbar");
 	const newRoomInput = el("input") as HTMLInputElement;
 	newRoomInput.placeholder = "new-room-id";
 	const createBtn = el("button", "secondary-btn");
 	createBtn.type = "button";
-	createBtn.textContent = "Create room";
-	createRow.append(newRoomInput, createBtn);
-	shell.appendChild(createRow);
+	createBtn.textContent = "Create";
+	roomToolbar.append(newRoomInput, createBtn);
 
-	const list = el("ul", "room-list");
-	shell.appendChild(list);
+	const railErr = el("div", "error-banner hidden");
+	const roomList = el("ul", "room-list");
+	roomRail.append(railHeader, roomToolbar, railErr, roomList);
 
-	let lastRoomId = initialLastRoomId;
+	// Reset all open swipes when clicking/tapping the rail background
+	roomRail.addEventListener("click", (ev) => {
+		const target = ev.target as HTMLElement;
+		if (!target.closest(".room-swipe-wrap")) {
+			for (const wrap of roomList.querySelectorAll(".room-swipe-wrap")) {
+				(wrap as HTMLElement).style.transform = "translateX(0)";
+				const da = wrap.querySelector(".room-swipe-delete") as HTMLElement | null;
+				if (da) da.style.opacity = "0";
+			}
+		}
+	});
 
-	function showLobbyError(message: string): void {
-		err.textContent = message;
-		err.classList.remove("hidden");
+	function closeRoomRail(): void {
+		roomRail.classList.remove("open");
+		roomRailBackdrop.classList.remove("visible");
+	}
+
+	function openRoomRail(): void {
+		roomRail.classList.add("open");
+		roomRailBackdrop.classList.add("visible");
+	}
+
+	roomRailBackdrop.onclick = () => closeRoomRail();
+
+	let selectedRoomId: string | null = initialRoomId ?? null;
+	let selectInFlight = false;
+	let reconnecting = false;
+
+	function showRailError(message: string): void {
+		railErr.textContent = message;
+		railErr.classList.remove("hidden");
+	}
+
+	function updateRailHighlight(): void {
+		for (const row of roomList.querySelectorAll(".room-row")) {
+			row.classList.toggle("active", row.getAttribute("data-room-id") === selectedRoomId);
+		}
 	}
 
 	function renderRoomRows(rooms: HubRoomSummary[]): void {
-		list.innerHTML = "";
+		roomList.innerHTML = "";
 		if (rooms.length === 0) {
 			const empty = el("li", "room-list-empty");
 			empty.textContent = "No rooms yet. Create one above.";
-			list.appendChild(empty);
+			roomList.appendChild(empty);
 			return;
 		}
 		for (const r of rooms) {
 			const li = el("li");
+
+			// Swipe container: wraps row + hidden delete action
+			const swipeWrap = el("div", "room-swipe-wrap");
+
 			const row = el("button", "room-row");
 			row.type = "button";
-			if (r.roomId === lastRoomId) {
+			row.setAttribute("data-room-id", r.roomId);
+			if (r.roomId === selectedRoomId) {
 				row.classList.add("active");
 			}
 			const main = el("span", "room-row-title");
@@ -290,71 +347,117 @@ function renderRoomLobby(
 			meta.textContent = `${formatRelativeTime(r.updatedAt)} · ${online} online`;
 			row.append(main, meta);
 
-			const roomId = r.roomId;
-			row.onclick = () => {
-				void (async () => {
-					try {
-						await ensureRoomRegistered(session, roomId, client);
-						saveSession(session, roomId);
-						transitionView(root, () =>
-							renderChat(
-								root,
-								session,
-								client,
-								roomId,
-								() => {
-									void (async () => {
-										try {
-											if (client.isJoined()) {
-												await client.leave();
-											}
-										} catch {
-											// ignore leave errors when returning to lobby
-										}
-										transitionView(root, () => renderRoomLobby(root, session, client, roomId, onSignOut));
-									})();
-								},
-								onSignOut,
-							),
-						);
-					} catch (e) {
-						showLobbyError(e instanceof Error ? e.message : String(e));
-					}
-				})();
-			};
+			// Delete action (hidden behind the row, revealed on swipe left)
+			const deleteAction = el("button", "room-swipe-delete danger-btn");
+			deleteAction.type = "button";
+			deleteAction.textContent = "Delete";
 
-			const actions = el("div", "room-row-actions");
-			const deleteBtn = el("button", "secondary-btn danger-btn");
-			deleteBtn.type = "button";
-			deleteBtn.textContent = "Delete";
-			deleteBtn.onclick = (ev) => {
-				ev.stopPropagation();
+			const roomId = r.roomId;
+			deleteAction.onclick = () => {
 				if (!confirm(`Delete room "${roomId}" and all session data?`)) return;
 				void (async () => {
 					try {
-						if (client.isJoined() && client.getRoomId() === roomId) {
+						if (selectedRoomId === roomId && client.isJoined()) {
 							await client.leave();
+							selectedRoomId = null;
 						}
 						await client.deleteRoom(roomId, true);
-						if (lastRoomId === roomId) {
-							lastRoomId = undefined;
-						}
-						await refreshList();
+						await refreshRoomList();
 					} catch (e) {
-						showLobbyError(e instanceof Error ? e.message : String(e));
+						showRailError(e instanceof Error ? e.message : String(e));
 					}
 				})();
 			};
-			actions.appendChild(deleteBtn);
-			li.append(row, actions);
-			list.appendChild(li);
+
+			// Touch swipe logic
+			let startX = 0;
+			let currentX = 0;
+			let isDragging = false;
+			const SWIPE_THRESHOLD = 60;
+
+			function updateSwipe(dx: number): void {
+				if (dx <= 0) {
+					// Swiping left — reveal delete behind
+					swipeWrap.style.transform = `translateX(${Math.max(dx, -SWIPE_THRESHOLD)}px)`;
+					deleteAction.style.opacity = String(Math.min(1, Math.abs(dx) / SWIPE_THRESHOLD));
+				} else {
+					// Swiping right — reset
+					swipeWrap.style.transform = "translateX(0)";
+					deleteAction.style.opacity = "0";
+				}
+			}
+
+			function commitSwipe(dx: number): void {
+				if (dx < -SWIPE_THRESHOLD / 2) {
+					// Open delete
+					swipeWrap.style.transform = `translateX(-${SWIPE_THRESHOLD}px)`;
+					deleteAction.style.opacity = "1";
+				} else {
+					// Reset
+					swipeWrap.style.transform = "translateX(0)";
+					deleteAction.style.opacity = "0";
+				}
+			}
+
+			swipeWrap.addEventListener(
+				"touchstart",
+				(e) => {
+					startX = e.touches[0]!.clientX;
+					isDragging = true;
+				},
+				{ passive: true },
+			);
+
+			swipeWrap.addEventListener(
+				"touchmove",
+				(e) => {
+					if (!isDragging) return;
+					currentX = e.touches[0]!.clientX;
+					const dx = currentX - startX;
+					updateSwipe(dx);
+				},
+				{ passive: true },
+			);
+
+			swipeWrap.addEventListener(
+				"touchend",
+				() => {
+					if (!isDragging) return;
+					isDragging = false;
+					const dx = currentX - startX;
+					commitSwipe(dx);
+					startX = 0;
+					currentX = 0;
+				},
+				{ passive: true },
+			);
+
+			// Click on row still selects the room; close any open swipe first
+			row.onclick = () => {
+				// Reset any open swipe
+				swipeWrap.style.transform = "translateX(0)";
+				deleteAction.style.opacity = "0";
+				closeRoomRail();
+				void selectRoom(roomId);
+			};
+
+			// Clicking anywhere else on the rail resets all swipes
+			// (handled via a single listener below)
+
+			swipeWrap.append(row, deleteAction);
+			li.appendChild(swipeWrap);
+			roomList.appendChild(li);
 		}
 	}
 
-	async function refreshList(): Promise<void> {
+	async function refreshRoomList(): Promise<void> {
+		if (!client.isSocketOpen()) {
+			await client.openSocket();
+		}
 		const rooms = await client.listRooms();
 		renderRoomRows(rooms);
-		err.classList.add("hidden");
+		railErr.classList.add("hidden");
+		return rooms;
 	}
 
 	createBtn.onclick = () => {
@@ -364,82 +467,42 @@ function renderRoomLobby(
 			try {
 				await client.createRoom(id);
 				newRoomInput.value = "";
-				lastRoomId = id;
-				await refreshList();
+				await refreshRoomList();
+				await selectRoom(id);
 			} catch (e) {
-				showLobbyError(e instanceof Error ? e.message : String(e));
+				showRailError(e instanceof Error ? e.message : String(e));
 			}
 		})();
 	};
 
-	client.onMessage((msg) => {
-		if (msg.type === "room_deleted") {
-			void refreshList();
-		}
-	});
-
-	root.appendChild(shell);
-	void refreshList().catch((e) => showLobbyError(e instanceof Error ? e.message : String(e)));
-}
-
-function renderChat(
-	root: HTMLElement,
-	session: StoredSession,
-	client: HubClient,
-	roomId: string,
-	onBackToRooms: () => void,
-	onSignOut: () => void,
-): void {
-	const cfg = { ...session, roomId };
-	root.innerHTML = "";
 	const layout = el("div", "chat-layout");
-	const sidebarBackdrop = el("div", "sidebar-backdrop");
-	const sidebar = el("aside", "sidebar");
 	const panel = el("div", "chat-panel");
-	layout.append(sidebarBackdrop, sidebar, panel);
-
-	function closeSidebar(): void {
-		sidebar.classList.remove("open");
-		sidebarBackdrop.classList.remove("visible");
-	}
-
-	function openSidebar(): void {
-		sidebar.classList.add("open");
-		sidebarBackdrop.classList.add("visible");
-	}
+	layout.appendChild(panel);
+	chatColumn.appendChild(layout);
 
 	const header = el("div", "header");
 	const headerBrand = el("div", "header-brand");
-	const sidebarToggle = el("button", "sidebar-toggle");
-	sidebarToggle.type = "button";
-	sidebarToggle.setAttribute("aria-label", "Toggle sidebar");
-	sidebarToggle.textContent = "Menu";
-	sidebarToggle.onclick = () => {
-		if (sidebar.classList.contains("open")) closeSidebar();
-		else openSidebar();
+	const roomsToggle = el("button", "secondary-btn room-rail-toggle");
+	roomsToggle.type = "button";
+	roomsToggle.setAttribute("aria-label", "Toggle room list");
+	roomsToggle.textContent = "Rooms";
+	roomsToggle.onclick = () => {
+		if (roomRail.classList.contains("open")) closeRoomRail();
+		else openRoomRail();
 	};
-	headerBrand.appendChild(sidebarToggle);
-	const backRoomsBtn = el("button", "secondary-btn header-rooms-btn");
-	backRoomsBtn.type = "button";
-	backRoomsBtn.textContent = "Rooms";
-	backRoomsBtn.onclick = () => {
-		void (async () => {
-			try {
-				if (client.isJoined()) {
-					await client.leave();
-				}
-			} catch {
-				// ignore
-			}
-			onBackToRooms();
-		})();
+	const roomSettingsBtn = el("button", "secondary-btn");
+	roomSettingsBtn.type = "button";
+	roomSettingsBtn.textContent = "Settings";
+	roomSettingsBtn.onclick = () => {
+		if (selectedRoomId) {
+			showRoomConfigModal();
+		}
 	};
-	headerBrand.appendChild(backRoomsBtn);
-	const logo = el("span", "logo");
-	logo.textContent = "pi Hub";
-	const room = el("span", "room");
-	room.textContent = roomId;
-	headerBrand.append(logo, room);
+	headerBrand.append(roomsToggle);
+	const roomLabel = el("span", "room");
+	roomLabel.textContent = selectedRoomId ?? "Select a room";
+	headerBrand.appendChild(roomLabel);
+	headerBrand.appendChild(roomSettingsBtn);
 
 	const statusWrap = el("div", "status-wrap");
 	const statusDot = el("span", "status-dot connecting");
@@ -448,12 +511,6 @@ function renderChat(
 	statusWrap.append(statusDot, status);
 	header.append(headerBrand, statusWrap);
 	panel.appendChild(header);
-	sidebarBackdrop.onclick = () => closeSidebar();
-	panel.addEventListener("click", () => {
-		if (window.matchMedia("(max-width: 640px)").matches && sidebar.classList.contains("open")) {
-			closeSidebar();
-		}
-	});
 
 	function setConnectionLive(live: boolean): void {
 		statusDot.classList.toggle("live", live);
@@ -533,11 +590,7 @@ function renderChat(
 	composer.append(input, sendBtn);
 	panel.appendChild(composer);
 
-	root.appendChild(layout);
-
-	// Sidebar: room config
-	const roomCfgDetails = el("details", "sidebar-section");
-	roomCfgDetails.appendChild(Object.assign(el("summary"), { textContent: "Room config" }));
+	// Room config modal elements (created once, reused)
 	const roomSkillsInput = el("input") as HTMLInputElement;
 	roomSkillsInput.placeholder = "skills (comma-separated)";
 	const roomRulesInput = el("textarea") as HTMLTextAreaElement;
@@ -545,48 +598,286 @@ function renderChat(
 	roomRulesInput.rows = 3;
 	const roomRolesEnabled = el("input") as HTMLInputElement;
 	roomRolesEnabled.type = "checkbox";
-	const rolesEnabledLabel = el("label");
-	rolesEnabledLabel.append(roomRolesEnabled, document.createTextNode(" Enable roles in this room"));
-	const saveRoomCfgBtn = el("button", "secondary-btn");
-	saveRoomCfgBtn.type = "button";
-	saveRoomCfgBtn.textContent = "Save room config";
-	roomCfgDetails.append(roomSkillsInput, roomRulesInput, rolesEnabledLabel, saveRoomCfgBtn);
 
-	// Sidebar: room assigned roles
-	const roomRolesDetails = el("details", "sidebar-section");
-	roomRolesDetails.open = true;
-	roomRolesDetails.appendChild(Object.assign(el("summary"), { textContent: "Room roles" }));
-	roomRolesDetails.appendChild(
-		Object.assign(el("p", "hint"), {
-			textContent: "Add roles from the library (include PM + workers). No duplicates.",
-		}),
-	);
-	const roomAssignedList = el("ul", "room-assigned-list");
-	const roomRoleAddRow = el("div", "sidebar-row");
-	const roomRoleAddSelect = el("select") as HTMLSelectElement;
-	const roomRoleAddBtn = el("button", "secondary-btn");
-	roomRoleAddBtn.type = "button";
-	roomRoleAddBtn.textContent = "Add role";
-	roomRoleAddRow.append(roomRoleAddSelect, roomRoleAddBtn);
-	roomRolesDetails.append(roomAssignedList, roomRoleAddRow);
+	function showRoomConfigModal(): void {
+		if (!selectedRoomId) return;
 
-	// Sidebar: global role library
-	const rolesDetails = el("details", "sidebar-section");
-	rolesDetails.appendChild(Object.assign(el("summary"), { textContent: "Role library" }));
-	const roleSelect = el("select") as HTMLSelectElement;
-	const roleEditor = el("textarea", "role-editor") as HTMLTextAreaElement;
-	roleEditor.rows = 12;
-	roleEditor.spellcheck = false;
-	const roleMeta = el("div", "role-meta");
-	const saveRoleBtn = el("button", "secondary-btn");
-	saveRoleBtn.type = "button";
-	saveRoleBtn.textContent = "Save role";
-	const deleteRoleBtn = el("button", "secondary-btn danger-btn");
-	deleteRoleBtn.type = "button";
-	deleteRoleBtn.textContent = "Delete role";
-	rolesDetails.append(roleSelect, roleMeta, roleEditor, saveRoleBtn, deleteRoleBtn);
+		const backdrop = el("div", "modal-backdrop");
+		const modal = el("div", "modal config-modal");
 
-	sidebar.append(roomCfgDetails, roomRolesDetails, rolesDetails);
+		const title = el("h3");
+		title.textContent = `Room settings: ${selectedRoomId}`;
+		modal.appendChild(title);
+
+		// Room config fields
+		const cfgSection = el("div", "config-section");
+		const cfgHeading = el("h4", "config-heading");
+		cfgHeading.textContent = "Configuration";
+		cfgSection.appendChild(cfgHeading);
+
+		const skillsLabel = el("label", "config-field");
+		skillsLabel.textContent = "Skills";
+		const skillsClone = roomSkillsInput.cloneNode() as HTMLInputElement;
+		skillsClone.value = roomSkillsInput.value;
+		skillsClone.placeholder = "skills (comma-separated)";
+		skillsLabel.appendChild(skillsClone);
+		cfgSection.appendChild(skillsLabel);
+
+		const rulesLabel = el("label", "config-field");
+		rulesLabel.textContent = "Rules";
+		const rulesClone = roomRulesInput.cloneNode() as HTMLTextAreaElement;
+		rulesClone.value = roomRulesInput.value;
+		rulesClone.rows = 3;
+		rulesClone.placeholder = "Room rules (inline)";
+		rulesLabel.appendChild(rulesClone);
+		cfgSection.appendChild(rulesLabel);
+
+		const rolesCb = roomRolesEnabled.cloneNode() as HTMLInputElement;
+		rolesCb.type = "checkbox";
+		rolesCb.checked = roomRolesEnabled.checked;
+		const rolesEnabledLabel = el("label", "config-field config-checkbox");
+		rolesEnabledLabel.append(rolesCb, document.createTextNode(" Enable roles in this room"));
+		cfgSection.appendChild(rolesEnabledLabel);
+
+		modal.appendChild(cfgSection);
+
+		// Room roles section
+		const rolesSection = el("div", "config-section");
+		const rolesHeading = el("h4", "config-heading");
+		rolesHeading.textContent = "Assigned roles";
+		rolesSection.appendChild(rolesHeading);
+		rolesSection.appendChild(
+			Object.assign(el("p", "config-hint"), {
+				textContent: "Add roles from the library (include PM + workers). No duplicates.",
+			}),
+		);
+
+		const assignedListClone = el("ul", "room-assigned-list");
+		// Re-render assigned roles with modal-aware remove handler
+		void (async () => {
+			const names = (await client.getRoomConfig(selectedRoomId!)).roleNames ?? [];
+			renderAssignedRoles(assignedListClone, names, () => {
+				void loadRoomConfigUi(selectedRoomId!).then(() => {
+					renderAssignedRoles(assignedListClone, names, () => {});
+				});
+			});
+		})();
+		rolesSection.appendChild(assignedListClone);
+
+		const addRow = el("div", "sidebar-row");
+		const addSelect = el("select") as HTMLSelectElement;
+		const addBtn = el("button", "secondary-btn");
+		addBtn.type = "button";
+		addBtn.textContent = "Add role";
+		addRow.append(addSelect, addBtn);
+
+		void (async () => {
+			const names = (await client.getRoomConfig(selectedRoomId!)).roleNames ?? [];
+			const allRoles = await client.listRoles();
+			fillRoleAddSelect(addSelect, allRoles, names);
+		})();
+
+		addBtn.onclick = () => {
+			const name = addSelect.value.trim();
+			if (!name || !selectedRoomId) return;
+			void (async () => {
+				try {
+					await client.addRoomRole(name, selectedRoomId!);
+					const config = await client.getRoomConfig(selectedRoomId!);
+					const names2 = config.roleNames ?? [];
+					renderAssignedRoles(assignedListClone, names2, () => {});
+					const allRoles2 = await client.listRoles();
+					fillRoleAddSelect(addSelect, allRoles2, names2);
+				} catch (e) {
+					showError(e instanceof Error ? e.message : String(e));
+				}
+			})();
+		};
+
+		rolesSection.appendChild(addRow);
+		modal.appendChild(rolesSection);
+
+		// Actions
+		const actions = el("div", "modal-actions");
+		const saveBtn = el("button", "primary-btn");
+		saveBtn.textContent = "Save";
+		saveBtn.onclick = () => {
+			void (async () => {
+				try {
+					const skills = skillsClone.value
+						.split(",")
+						.map((s) => s.trim())
+						.filter(Boolean);
+					await client.setRoomConfig(selectedRoomId!, {
+						skills: skills.length > 0 ? skills : undefined,
+						rules: rulesClone.value.trim() || undefined,
+						rolesEnabled: rolesCb.checked ? true : undefined,
+					});
+					// Sync back the static inputs
+					roomSkillsInput.value = skillsClone.value;
+					roomRulesInput.value = rulesClone.value;
+					roomRolesEnabled.checked = rolesCb.checked;
+					backdrop.remove();
+				} catch (e) {
+					showError(e instanceof Error ? e.message : String(e));
+				}
+			})();
+		};
+		const cancelBtn = el("button", "secondary-btn");
+		cancelBtn.textContent = "Cancel";
+		cancelBtn.onclick = () => backdrop.remove();
+		actions.append(saveBtn, cancelBtn);
+		modal.appendChild(actions);
+
+		backdrop.appendChild(modal);
+		document.body.appendChild(backdrop);
+	}
+
+	function renderAssignedRoles(list: HTMLUListElement, names: string[], _onChange: () => void): void {
+		list.innerHTML = "";
+		for (const name of names) {
+			const li = el("li", "room-assigned-item");
+			const label = el("span");
+			label.textContent = name;
+			const removeBtn = el("button", "secondary-btn danger-btn");
+			removeBtn.type = "button";
+			removeBtn.textContent = "Remove";
+			removeBtn.onclick = () => {
+				if (!selectedRoomId) return;
+				void (async () => {
+					try {
+						await client.removeRoomRole(name, selectedRoomId!);
+						const config = await client.getRoomConfig(selectedRoomId!);
+						const updated = config.roleNames ?? [];
+						renderAssignedRoles(list, updated, _onChange);
+						// Re-fill the add select
+						const addSelect2 = list.parentElement?.querySelector("select") as HTMLSelectElement | null;
+						if (addSelect2) {
+							const allRoles = await client.listRoles();
+							fillRoleAddSelect(addSelect2, allRoles, updated);
+						}
+						_onChange();
+					} catch (e) {
+						showError(e instanceof Error ? e.message : String(e));
+					}
+				})();
+			};
+			li.append(label, removeBtn);
+			list.appendChild(li);
+		}
+	}
+
+	function fillRoleAddSelect(
+		select: HTMLSelectElement,
+		allRoles: Array<{ name: string; source: string }>,
+		assigned: string[],
+	): void {
+		const assignedSet = new Set(assigned);
+		select.innerHTML = "";
+		const placeholder = el("option") as HTMLOptionElement;
+		placeholder.value = "";
+		placeholder.textContent = assigned.length === allRoles.length ? "(all roles assigned)" : "Select role…";
+		placeholder.disabled = assigned.length === allRoles.length;
+		select.appendChild(placeholder);
+		for (const r of allRoles) {
+			if (assignedSet.has(r.name)) continue;
+			const opt = el("option") as HTMLOptionElement;
+			opt.value = r.name;
+			opt.textContent = `${r.name} (${r.source})`;
+			select.appendChild(opt);
+		}
+	}
+
+	// Role library modal
+	function showRoleLibraryModal(): void {
+		const backdrop = el("div", "modal-backdrop");
+		const modal = el("div", "modal config-modal");
+
+		const title = el("h3");
+		title.textContent = "Role library";
+		modal.appendChild(title);
+
+		const select = el("select") as HTMLSelectElement;
+		const editor = el("textarea", "role-editor") as HTMLTextAreaElement;
+		editor.rows = 12;
+		editor.spellcheck = false;
+		const meta = el("div", "role-meta");
+
+		async function loadRole(name: string): Promise<void> {
+			const role = await client.getRole(name);
+			editor.value = role.content;
+			meta.textContent = `${role.source} · ${role.filePath}`;
+		}
+
+		async function refreshSelect(): Promise<void> {
+			const roles = await client.listRoles();
+			const prev = select.value;
+			select.innerHTML = "";
+			for (const r of roles) {
+				const opt = el("option") as HTMLOptionElement;
+				opt.value = r.name;
+				opt.textContent = `${r.name} (${r.source})`;
+				select.appendChild(opt);
+			}
+			if (roles.length > 0) {
+				select.value = roles.some((r) => r.name === prev) ? prev : roles[0]!.name;
+				await loadRole(select.value);
+			} else {
+				editor.value = "";
+				meta.textContent = "";
+			}
+		}
+
+		modal.appendChild(select);
+		modal.appendChild(meta);
+		modal.appendChild(editor);
+
+		select.addEventListener("change", () => {
+			void loadRole(select.value).catch((e) => showError(e instanceof Error ? e.message : String(e)));
+		});
+
+		const actions = el("div", "modal-actions");
+
+		const saveBtn = el("button", "primary-btn");
+		saveBtn.textContent = "Save";
+		saveBtn.onclick = () => {
+			void (async () => {
+				try {
+					await client.saveRole(select.value, editor.value);
+					await refreshSelect();
+				} catch (e) {
+					showError(e instanceof Error ? e.message : String(e));
+				}
+			})();
+		};
+
+		const deleteBtn = el("button", "secondary-btn danger-btn");
+		deleteBtn.textContent = "Delete";
+		deleteBtn.onclick = () => {
+			if (!confirm(`Delete role "${select.value}"?`)) return;
+			void (async () => {
+				try {
+					await client.deleteRole(select.value);
+					await refreshSelect();
+				} catch (e) {
+					showError(e instanceof Error ? e.message : String(e));
+				}
+			})();
+		};
+
+		const cancelBtn = el("button", "secondary-btn");
+		cancelBtn.textContent = "Close";
+		cancelBtn.onclick = () => backdrop.remove();
+
+		actions.append(saveBtn, deleteBtn, cancelBtn);
+		modal.appendChild(actions);
+
+		backdrop.appendChild(modal);
+		document.body.appendChild(backdrop);
+
+		void refreshSelect().catch((e) => showError(e instanceof Error ? e.message : String(e)));
+	}
+
 	let streamingAssistantEl: HTMLElement | null = null;
 	let turnHostName: string | null = null;
 	let clientId = "";
@@ -769,7 +1060,14 @@ function renderChat(
 			div.appendChild(m);
 		}
 		const body = el("div", "msg-body");
-		body.textContent = text;
+		// Add avatar dot for user/assistant messages
+		if (role === "user" || role === "assistant") {
+			const avatar = el("span", "msg-avatar");
+			avatar.textContent = role === "user" ? USER_AVATAR : ASSISTANT_AVATAR;
+			avatar.setAttribute("aria-hidden", "true");
+			body.prepend(avatar);
+		}
+		body.append(document.createTextNode(text));
 		div.appendChild(body);
 		messages.appendChild(div);
 		messages.scrollTop = messages.scrollHeight;
@@ -817,7 +1115,12 @@ function renderChat(
 		}
 		const body = streamingAssistantEl.querySelector(".msg-body");
 		if (body) {
-			body.textContent = getMessageText(message);
+			const text = getMessageText(message);
+			if (text) {
+				body.textContent = text;
+			} else {
+				body.textContent = "⋯";
+			}
 		}
 		messages.scrollTop = messages.scrollHeight;
 	}
@@ -895,6 +1198,16 @@ function renderChat(
 		}
 	}
 
+	function setStreamingVisual(streaming: boolean): void {
+		if (streaming) {
+			sendBtn.disabled = true;
+			sendBtn.textContent = "⋯";
+		} else {
+			sendBtn.disabled = false;
+			sendBtn.textContent = "Send";
+		}
+	}
+
 	function handleAgentEvent(msg: HubServerMessage): void {
 		if (msg.type !== "agent_event") return;
 		const hostDisplayName = (msg.hostDisplayName as string | undefined) ?? turnHostName;
@@ -912,6 +1225,7 @@ function renderChat(
 			const m = event.message as { role?: string; customType?: string };
 			if (m.role === "assistant") {
 				streamingAssistantEl = appendMessage("assistant", "", assistantMetaLabel(hostDisplayName));
+				setStreamingVisual(true);
 			} else if (m.role === "custom") {
 				const div = el("div", `msg ${messageRoleClass(m)}`);
 				const meta = el("div", "meta");
@@ -941,6 +1255,7 @@ function renderChat(
 				}
 				updateStreamingAssistant(event.message, hostDisplayName);
 				streamingAssistantEl = null;
+				setStreamingVisual(false);
 			} else if (m.role === "user") {
 				const text = getMessageText(m);
 				if (text && text !== lastUserMessageText()) {
@@ -950,6 +1265,7 @@ function renderChat(
 		}
 		if (event.type === "agent_end" && Array.isArray(event.messages)) {
 			renderHistory(event.messages);
+			setStreamingVisual(false);
 		}
 		if (event.type === "tool_execution_start") {
 			const host = hostDisplayName ?? turnHostName;
@@ -1080,163 +1396,108 @@ function renderChat(
 		})();
 	};
 
-	async function loadRoomConfigUi(): Promise<void> {
-		const config = await client.getRoomConfig(client.getRoomId());
+	async function loadRoomConfigUi(roomId: string): Promise<void> {
+		const config = await client.getRoomConfig(roomId);
 		roomSkillsInput.value = (config.skills ?? []).join(", ");
 		roomRulesInput.value = config.rules ?? "";
 		roomRolesEnabled.checked = config.rolesEnabled === true;
-		await refreshRoomAssignedRoles(config.roleNames ?? []);
 	}
 
-	async function refreshRoomAssignedRoles(assigned?: string[]): Promise<void> {
-		const names = assigned ?? (await client.getRoomConfig(client.getRoomId())).roleNames ?? [];
-		roomAssignedList.innerHTML = "";
-		for (const name of names) {
-			const li = el("li", "room-assigned-item");
-			const label = el("span");
-			label.textContent = name;
-			const removeBtn = el("button", "secondary-btn danger-btn");
-			removeBtn.type = "button";
-			removeBtn.textContent = "Remove";
-			removeBtn.onclick = () => {
-				void (async () => {
-					try {
-						await client.removeRoomRole(name);
-						await loadRoomConfigUi();
-					} catch (e) {
-						showError(e instanceof Error ? e.message : String(e));
-					}
-				})();
-			};
-			li.append(label, removeBtn);
-			roomAssignedList.appendChild(li);
-		}
-
-		const allRoles = await client.listRoles();
-		const assignedSet = new Set(names);
-		roomRoleAddSelect.innerHTML = "";
-		const placeholder = el("option") as HTMLOptionElement;
-		placeholder.value = "";
-		placeholder.textContent = names.length === allRoles.length ? "(all roles assigned)" : "Select role…";
-		placeholder.disabled = names.length === allRoles.length;
-		roomRoleAddSelect.appendChild(placeholder);
-		for (const r of allRoles) {
-			if (assignedSet.has(r.name)) continue;
-			const opt = el("option") as HTMLOptionElement;
-			opt.value = r.name;
-			opt.textContent = `${r.name} (${r.source})`;
-			roomRoleAddSelect.appendChild(opt);
-		}
-		roomRoleAddBtn.disabled = names.length === allRoles.length;
+	function clearChatPanels(): void {
+		messages.innerHTML = "";
+		roleGapBar.classList.add("hidden");
+		roleGapBar.textContent = "";
+		rolePlanPanel.classList.add("hidden");
+		rolePlanPanel.textContent = "";
+		roleProgressBar.classList.add("hidden");
+		roleProgressBar.textContent = "";
+		activityBar.classList.add("hidden");
+		activityBar.textContent = "";
+		queueBar.textContent = "Queue empty";
+		streamingAssistantEl = null;
+		setStreamingVisual(false);
 	}
 
-	roomRoleAddBtn.onclick = () => {
-		const name = roomRoleAddSelect.value.trim();
-		if (!name) return;
-		void (async () => {
+	async function selectRoom(roomId: string): Promise<void> {
+		if (selectInFlight) return;
+		if (selectedRoomId === roomId && client.isJoined() && client.getRoomId() === roomId) {
 			try {
-				await client.addRoomRole(name);
-				await loadRoomConfigUi();
+				await loadRoomConfigUi(roomId);
 			} catch (e) {
 				showError(e instanceof Error ? e.message : String(e));
 			}
-		})();
-	};
-
-	async function refreshRolesSidebar(): Promise<void> {
-		const roles = await client.listRoles();
-		const prev = roleSelect.value;
-		roleSelect.innerHTML = "";
-		for (const r of roles) {
-			const opt = el("option") as HTMLOptionElement;
-			opt.value = r.name;
-			opt.textContent = `${r.name} (${r.source})`;
-			roleSelect.appendChild(opt);
+			return;
 		}
-		if (roles.length > 0) {
-			roleSelect.value = roles.some((r) => r.name === prev) ? prev : roles[0]!.name;
-			await loadRoleEditor(roleSelect.value);
+
+		selectInFlight = true;
+		selectedRoomId = roomId;
+		updateRailHighlight();
+		roomLabel.textContent = roomId;
+		saveSession(session, roomId);
+		err.classList.add("hidden");
+		setConnectionLive(false);
+		status.textContent = "Connecting…";
+		clearChatPanels();
+
+		try {
+			await ensureRoomRegistered(session, roomId, client);
+			await client.switchRoom(roomId);
+			await loadRoomConfigUi(roomId);
+		} catch (e) {
+			setConnectionLive(false);
+			showError(e instanceof Error ? e.message : String(e));
+			status.textContent = "Failed";
+		} finally {
+			selectInFlight = false;
 		}
 	}
 
-	async function loadRoleEditor(name: string): Promise<void> {
-		const role = await client.getRole(name);
-		roleEditor.value = role.content;
-		roleMeta.textContent = `${role.source} · ${role.filePath}`;
-	}
-
-	saveRoomCfgBtn.onclick = () => {
-		void (async () => {
-			try {
-				const skills = roomSkillsInput.value
-					.split(",")
-					.map((s) => s.trim())
-					.filter(Boolean);
-				await client.setRoomConfig(client.getRoomId(), {
-					skills: skills.length > 0 ? skills : undefined,
-					rules: roomRulesInput.value.trim() || undefined,
-					rolesEnabled: roomRolesEnabled.checked ? true : undefined,
-				});
-			} catch (e) {
-				showError(e instanceof Error ? e.message : String(e));
-			}
-		})();
-	};
-
-	roleSelect.addEventListener("change", () => {
-		void loadRoleEditor(roleSelect.value).catch((e) => showError(e instanceof Error ? e.message : String(e)));
-	});
-
-	saveRoleBtn.onclick = () => {
-		void (async () => {
-			try {
-				await client.saveRole(roleSelect.value, roleEditor.value);
-				await refreshRolesSidebar();
-			} catch (e) {
-				showError(e instanceof Error ? e.message : String(e));
-			}
-		})();
-	};
-
-	deleteRoleBtn.onclick = () => {
-		if (!confirm(`Delete role "${roleSelect.value}"?`)) return;
-		void (async () => {
-			try {
-				await client.deleteRole(roleSelect.value);
-				await refreshRolesSidebar();
-			} catch (e) {
-				showError(e instanceof Error ? e.message : String(e));
-			}
-		})();
-	};
-
-	function returnToLobby(highlightRoomId?: string): void {
-		void (async () => {
-			try {
-				if (client.isJoined()) {
-					await client.leave();
-				}
-			} catch {
-				// ignore
-			}
-			onBackToRooms();
-			if (highlightRoomId) {
-				saveSession(session, highlightRoomId);
-			}
-		})();
+	async function reconnectHub(): Promise<void> {
+		if (!selectedRoomId || reconnecting) return;
+		reconnecting = true;
+		setConnectionLive(false);
+		status.textContent = "Reconnecting…";
+		showError("Hub disconnected. Reconnecting…");
+		try {
+			await client.openSocket();
+			await selectRoom(selectedRoomId);
+			err.classList.add("hidden");
+		} catch (e) {
+			showError(e instanceof Error ? e.message : String(e));
+			status.textContent = "Disconnected";
+		} finally {
+			reconnecting = false;
+		}
 	}
 
 	client.onMessage((msg) => {
-		if (msg.type === "room_deleted" && msg.roomId === client.getRoomId()) {
-			showError("This room was deleted");
-			returnToLobby();
+		if (msg.type === "connection_lost") {
+			void reconnectHub();
+			return;
+		}
+		if (msg.type === "room_deleted") {
+			void refreshRoomList();
+			if (msg.roomId === selectedRoomId) {
+				showError("This room was deleted");
+				selectedRoomId = null;
+				updateRailHighlight();
+				roomLabel.textContent = "Select a room";
+				clearChatPanels();
+				setConnectionLive(false);
+				status.textContent = "Room deleted";
+			}
 			return;
 		}
 		if (msg.type === "joined") {
+			const joinedRoomId = (msg.roomId as string | undefined) ?? client.getRoomId();
+			if (joinedRoomId !== selectedRoomId) {
+				return;
+			}
 			setConnectionLive(true);
 			clientId = (msg.clientId as string) ?? "";
 			applyStateModel(msg.state as HubSessionState | undefined);
 			renderHistory((msg.messages as unknown[]) ?? []);
+			void loadRoomConfigUi(joinedRoomId).catch((e) => showError(e instanceof Error ? e.message : String(e)));
 			void refreshModelList(
 				(msg.state as HubSessionState | undefined)?.model?.provider && (msg.state as HubSessionState).model?.id
 					? {
@@ -1279,9 +1540,9 @@ function renderChat(
 
 	sendBtn.onclick = () => {
 		const text = input.value.trim();
-		if (!text) return;
+		if (!text || !selectedRoomId || !client.isJoined()) return;
 		input.value = "";
-		appendMessage("user", text, cfg.displayName);
+		appendMessage("user", text, session.displayName);
 		client.prompt(text);
 	};
 
@@ -1293,20 +1554,17 @@ function renderChat(
 	});
 
 	updateHeaderStatus();
-	saveSession(session, roomId);
-	ensureRoomRegistered(session, roomId, client)
-		.then(() => client.switchRoom(roomId))
-		.then(() => {
-			void loadRoomConfigUi();
-			void refreshRolesSidebar();
-			void refreshRoomAssignedRoles();
-		})
-		.catch((e) => {
-			setConnectionLive(false);
-			showError(e instanceof Error ? e.message : String(e));
-			status.textContent = "Failed";
-			returnToLobby(roomId);
-		});
+
+	void (async () => {
+		try {
+			const rooms = await refreshRoomList();
+			if (initialRoomId && rooms.some((r) => r.roomId === initialRoomId)) {
+				await selectRoom(initialRoomId);
+			}
+		} catch (e) {
+			showRailError(e instanceof Error ? e.message : String(e));
+		}
+	})();
 }
 
 const app = document.getElementById("app")!;
@@ -1314,6 +1572,13 @@ const app = document.getElementById("app")!;
 function signOut(client: HubClient): void {
 	client.disconnect();
 	transitionView(app, () => renderLogin(app));
+}
+
+function renderConnecting(root: HTMLElement): void {
+	root.innerHTML = "";
+	const shell = el("div", "connect-shell");
+	shell.appendChild(Object.assign(el("p", "hint"), { textContent: "Connecting…" }));
+	root.appendChild(shell);
 }
 
 function tryAutoSession(): boolean {
@@ -1327,11 +1592,16 @@ function tryAutoSession(): boolean {
 		displayName: stored.displayName,
 	};
 	const client = new HubClient(session.hubUrl, "_lobby", session.token, session.displayName);
-	renderRoomLobby(app, session, client, stored.roomId, () => signOut(client));
-	void client.openSocket().catch(() => {
-		client.disconnect();
-		transitionView(app, () => renderLogin(app));
-	});
+	renderConnecting(app);
+	void (async () => {
+		try {
+			await client.openSocket();
+			transitionView(app, () => renderWorkspace(app, session, client, stored.roomId, () => signOut(client)));
+		} catch {
+			client.disconnect();
+			transitionView(app, () => renderLogin(app));
+		}
+	})();
 	return true;
 }
 

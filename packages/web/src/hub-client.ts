@@ -42,6 +42,7 @@ export class HubClient {
 	private readonly token: string;
 	private readonly displayName: string;
 	private joined = false;
+	private socketOpenSettled = false;
 
 	constructor(hubUrl: string, roomId: string, token: string, displayName: string) {
 		this.hubUrl = hubUrl;
@@ -58,6 +59,10 @@ export class HubClient {
 		return this.joined;
 	}
 
+	isSocketOpen(): boolean {
+		return this.ws?.readyState === WebSocket.OPEN;
+	}
+
 	onMessage(handler: MessageHandler): () => void {
 		this.handlers.push(handler);
 		return () => {
@@ -65,8 +70,41 @@ export class HubClient {
 		};
 	}
 
+	private resetMembership(): void {
+		this.joined = false;
+	}
+
+	private notifyHandlers(msg: HubServerMessage): void {
+		for (const h of this.handlers) {
+			h(msg);
+		}
+	}
+
+	private handleSocketClosed(): void {
+		this.resetMembership();
+		this.notifyHandlers({ type: "connection_lost" });
+	}
+
+	private closeExistingSocket(): void {
+		if (!this.ws) {
+			return;
+		}
+		const existing = this.ws;
+		existing.onopen = null;
+		existing.onmessage = null;
+		existing.onerror = null;
+		existing.onclose = null;
+		if (existing.readyState === WebSocket.OPEN || existing.readyState === WebSocket.CONNECTING) {
+			existing.close();
+		}
+		this.ws = null;
+	}
+
 	/** Open WebSocket only (no join). */
 	openSocket(): Promise<void> {
+		this.closeExistingSocket();
+		this.socketOpenSettled = false;
+
 		return new Promise((resolve, reject) => {
 			let settled = false;
 			const fail = (error: Error) => {
@@ -84,6 +122,7 @@ export class HubClient {
 			this.ws.onopen = () => {
 				if (!settled) {
 					settled = true;
+					this.socketOpenSettled = true;
 					clearTimeout(timeoutId);
 					resolve();
 				}
@@ -92,6 +131,9 @@ export class HubClient {
 			this.ws.onerror = () => fail(new Error(`WebSocket error connecting to ${this.hubUrl}`));
 			this.ws.onclose = (ev) => {
 				clearTimeout(timeoutId);
+				if (this.socketOpenSettled) {
+					this.handleSocketClosed();
+				}
 				if (!settled) {
 					fail(new Error(`WebSocket closed (${ev.code})`));
 				}
@@ -111,9 +153,14 @@ export class HubClient {
 		if (!this.joined) {
 			return Promise.resolve();
 		}
-		return new Promise((resolve, reject) => {
+		if (!this.isSocketOpen()) {
+			this.resetMembership();
+			return Promise.resolve();
+		}
+		return new Promise((resolve) => {
 			const timeoutId = setTimeout(() => {
-				reject(new Error("Leave timed out"));
+				this.resetMembership();
+				resolve();
 			}, 30_000);
 
 			const unsub = this.onMessage((msg) => {
@@ -137,9 +184,14 @@ export class HubClient {
 
 	async switchRoom(roomId: string): Promise<void> {
 		if (this.joined) {
-			await this.leave();
+			try {
+				await this.leave();
+			} catch {
+				this.resetMembership();
+			}
 		}
-		if (this.ws?.readyState !== WebSocket.OPEN) {
+		if (!this.isSocketOpen()) {
+			this.resetMembership();
 			await this.openSocket();
 		}
 		await this.join(roomId);
@@ -149,6 +201,9 @@ export class HubClient {
 		this.roomId = roomId;
 		if (this.joined) {
 			return Promise.reject(new Error("Already joined; call leave() first"));
+		}
+		if (!this.isSocketOpen()) {
+			return Promise.reject(new Error("WebSocket is not open"));
 		}
 		return new Promise((resolve, reject) => {
 			const timeoutId = setTimeout(() => {
@@ -185,9 +240,7 @@ export class HubClient {
 		try {
 			const msg = JSON.parse(String(ev.data)) as HubServerMessage;
 			this.handleCommandResult(msg);
-			for (const h of this.handlers) {
-				h(msg);
-			}
+			this.notifyHandlers(msg);
 		} catch {
 			// ignore
 		}
@@ -381,9 +434,13 @@ export class HubClient {
 	}
 
 	disconnect(): void {
-		this.joined = false;
-		this.ws?.close();
-		this.ws = null;
+		this.resetMembership();
+		this.socketOpenSettled = false;
+		this.closeExistingSocket();
+		for (const pending of this.pendingCommands.values()) {
+			pending.reject(new Error("Disconnected"));
+		}
+		this.pendingCommands.clear();
 	}
 }
 

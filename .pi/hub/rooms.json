@@ -1,0 +1,29 @@
+{
+  "rooms": [
+    {
+      "roomId": "default",
+      "title": "Default",
+      "createdAt": "2026-05-21T14:43:52.180Z",
+      "updatedAt": "2026-05-21T15:43:57.204Z",
+      "sessionFile": ".pi/hub/rooms/default/2026-05-21T15-43-57-204Z_019e4b35-2f14-7407-967e-cf3fd5cdf711.jsonl"
+    },
+    {
+      "roomId": "pi-hub美化",
+      "createdAt": "2026-05-21T14:46:03.164Z",
+      "updatedAt": "2026-05-21T15:05:06.983Z",
+      "sessionFile": ".pi/hub/rooms/pi-hub美化/2026-05-21T14-57-33-226Z_019e4b0a-b42a-7b61-ba41-415a501d9cc4.jsonl"
+    },
+    {
+      "roomId": "pi-hub功能",
+      "createdAt": "2026-05-21T15:27:00.729Z",
+      "updatedAt": "2026-05-21T15:47:15.562Z",
+      "sessionFile": ".pi/hub/rooms/pi-hub功能/2026-05-21T15-43-40-302Z_019e4b34-ed0e-7b23-a93e-6e1131bbd749.jsonl"
+    },
+    {
+      "roomId": "pi-hub策划",
+      "createdAt": "2026-05-21T15:47:50.522Z",
+      "updatedAt": "2026-05-21T15:56:58.443Z",
+      "sessionFile": ".pi/hub/rooms/pi-hub策划/2026-05-21T15-47-50-528Z_019e4b38-be80-76f0-b169-b58ba7461138.jsonl"
+    }
+  ]
+}
