@@ -8,6 +8,7 @@ import {
 	RoleStoreError,
 	saveRoleContent,
 } from "./roles/role-store.ts";
+import { getSkillContent, listSkillFiles } from "./roles/skill-store.ts";
 import type { RoomManager } from "./room-manager.ts";
 import { RoomRegistryError } from "./room-registry.ts";
 import {
@@ -86,6 +87,12 @@ export class HubAdmin {
 					return;
 				case "delete_role":
 					await this.handleDeleteRole(ws, message.name, message.id);
+					return;
+				case "list_skills":
+					await this.handleListSkills(ws, message.id);
+					return;
+				case "get_skill_content":
+					await this.handleGetSkillContent(ws, message.name, message.id);
 					return;
 			}
 		} catch (err) {
@@ -217,6 +224,20 @@ export class HubAdmin {
 			pmRole: this.options.rolesConfig.pmRole,
 		});
 		this.sendCommandResult(ws, "delete_role", id, true);
+	}
+
+	private handleListSkills(ws: WebSocket, id?: string): void {
+		const skills = listSkillFiles({ cwd: this.options.cwd });
+		this.sendCommandResult(ws, "list_skills", id, true, undefined, { skills });
+	}
+
+	private handleGetSkillContent(ws: WebSocket, name: string, id?: string): void {
+		const skill = getSkillContent(this.options.cwd, name);
+		if (!skill) {
+			this.sendCommandResult(ws, "get_skill_content", id, false, `Skill "${name}" not found`);
+			return;
+		}
+		this.sendCommandResult(ws, "get_skill_content", id, true, undefined, skill);
 	}
 
 	private send(ws: WebSocket, message: object): void {

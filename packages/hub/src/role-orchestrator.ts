@@ -143,29 +143,10 @@ export class RoleOrchestrator {
 		const roomConfig = this.getRoomConfig();
 		const assigned = roomConfig.roleNames ?? [];
 		if (assigned.length === 0) {
-			console.warn("[pi-hub] roles enabled but room has no assigned roles; falling back to direct prompt");
-			return false;
-		}
-		if (!assigned.includes(this.rolesConfig.pmRole)) {
-			console.warn(
-				`[pi-hub] PM role "${this.rolesConfig.pmRole}" must be added to the room role list; falling back to direct prompt`,
-			);
 			return false;
 		}
 		const discovery = this.discoverConfiguredRoles();
-		const pm = getRoleByName(discovery.roles, this.rolesConfig.pmRole);
-		if (!pm) {
-			console.warn(
-				`[pi-hub] PM role "${this.rolesConfig.pmRole}" not found in role library; falling back to direct prompt`,
-			);
-			return false;
-		}
-		const workers = discovery.roles.filter((r) => r.name !== this.rolesConfig.pmRole);
-		if (workers.length === 0) {
-			console.warn("[pi-hub] room needs at least one worker role besides PM; falling back to direct prompt");
-			return false;
-		}
-		return true;
+		return discovery.roles.length > 0;
 	}
 
 	private async recordRoleMessage(
@@ -200,91 +181,137 @@ export class RoleOrchestrator {
 		const discovery = this.discoverConfiguredRoles();
 		const roomContext = buildRoomContextPrefix(this.session);
 
+		const roleNames = this.getRoomConfig().roleNames ?? [];
+		const hasPm = roleNames.includes(this.rolesConfig.pmRole);
 		const pmRole = getRoleByName(discovery.roles, this.rolesConfig.pmRole);
-		if (!pmRole) {
-			throw new Error(`PM role "${this.rolesConfig.pmRole}" not found`);
-		}
-
 		const workerRoles = discovery.roles.filter((r) => r.name !== this.rolesConfig.pmRole);
-		const roomRoster = formatRoomRosterForPm(workerRoles);
 
-		const pmResult = await this.runRole({
-			role: pmRole,
-			task: buildPmPrompt(userMessage, roomRoster, this.rolesConfig.pmRole),
-			cwd: this.cwd,
-			agentDir: this.agentDir,
-			contextPrefix: roomContext,
-			signal,
-			roomSkillsDir: this.roomSkillsDir(),
-		});
+		if (hasPm && pmRole && workerRoles.length > 0) {
+			// === PM mode: PM plans, workers execute ===
+			const roomRoster = formatRoomRosterForPm(workerRoles);
 
-		if (pmResult.exitCode !== 0) {
-			const detail = pmResult.errorMessage ?? pmResult.stderr ?? pmResult.output;
-			throw new Error(`PM subprocess failed (exit ${pmResult.exitCode}): ${detail}`);
-		}
+			const pmResult = await this.runRole({
+				role: pmRole,
+				task: buildPmPrompt(userMessage, roomRoster, this.rolesConfig.pmRole),
+				cwd: this.cwd,
+				agentDir: this.agentDir,
+				contextPrefix: roomContext,
+				signal,
+				roomSkillsDir: this.roomSkillsDir(),
+			});
 
-		const plan = parseTaskPlan(pmResult.output);
-		this.onBroadcast({ type: "role_plan", plan });
-
-		const planSummary = `PM plan: ${plan.summary}\nTasks: ${plan.tasks.map((t) => `${t.role}: ${t.task}`).join("; ")}`;
-		await this.recordRoleMessage("hub_role_plan", planSummary, { plan });
-
-		const allGaps: TaskPlanGap[] = [...plan.uncovered];
-		const roleMap = new Map(workerRoles.map((r) => [r.name, r]));
-
-		const executableTasks = [];
-		for (const task of plan.tasks) {
-			if (task.role === this.rolesConfig.pmRole) {
-				continue;
+			if (pmResult.exitCode !== 0) {
+				const detail = pmResult.errorMessage ?? pmResult.stderr ?? pmResult.output;
+				throw new Error(`PM subprocess failed (exit ${pmResult.exitCode}): ${detail}`);
 			}
-			if (!roleMap.has(task.role)) {
-				allGaps.push({
-					description: task.task,
-					reason: `No role named "${task.role}"`,
-				});
-				continue;
+
+			const plan = parseTaskPlan(pmResult.output);
+			this.onBroadcast({ type: "role_plan", plan });
+
+			const planSummary = `PM plan: ${plan.summary}\nTasks: ${plan.tasks.map((t) => `${t.role}: ${t.task}`).join("; ")}`;
+			await this.recordRoleMessage("hub_role_plan", planSummary, { plan });
+
+			const allGaps: TaskPlanGap[] = [...plan.uncovered];
+			const roleMap = new Map(workerRoles.map((r) => [r.name, r]));
+
+			const executableTasks = [];
+			for (const task of plan.tasks) {
+				if (task.role === this.rolesConfig.pmRole) continue;
+				if (!roleMap.has(task.role)) {
+					allGaps.push({ description: task.task, reason: `No role named "${task.role}"` });
+					continue;
+				}
+				executableTasks.push(task);
 			}
-			executableTasks.push(task);
-		}
 
-		if (allGaps.length > 0) {
-			this.onBroadcast({ type: "role_gap", uncovered: allGaps });
-		}
+			if (allGaps.length > 0) {
+				this.onBroadcast({ type: "role_gap", uncovered: allGaps });
+			}
 
-		const batches = planExecutionBatches(executableTasks);
-		const results: RoleTaskResult[] = [];
-		const outputsByRole = new Map<string, string>();
+			const batches = planExecutionBatches(executableTasks);
+			const results: RoleTaskResult[] = [];
+			const outputsByRole = new Map<string, string>();
 
-		for (const batch of batches) {
-			const batchResults = await mapWithConcurrencyLimit(batch.tasks, this.rolesConfig.maxParallel, async (task) => {
+			for (const batch of batches) {
+				const batchResults = await mapWithConcurrencyLimit(
+					batch.tasks,
+					this.rolesConfig.maxParallel,
+					async (task) => {
+						const taskId = crypto.randomUUID();
+						const role = roleMap.get(task.role)!;
+
+						this.onBroadcast({ type: "role_progress", role: task.role, taskId, phase: "started" });
+
+						const contextParts: string[] = [];
+						if (roomContext) contextParts.push(roomContext);
+						for (const dep of task.dependsOn ?? []) {
+							const prior = outputsByRole.get(dep);
+							if (prior) contextParts.push(`Output from role "${dep}":\n${prior}`);
+						}
+						const contextPrefix = combineContextPrefix(...contextParts);
+
+						const runResult = await this.runRole({
+							role,
+							task: task.task,
+							cwd: this.cwd,
+							agentDir: this.agentDir,
+							contextPrefix,
+							signal,
+							roomSkillsDir: this.roomSkillsDir(),
+						});
+
+						const failed = runResult.exitCode !== 0;
+						const preview =
+							runResult.output.length > 200 ? `${runResult.output.slice(0, 200)}...` : runResult.output;
+
+						this.onBroadcast({
+							type: "role_progress",
+							role: task.role,
+							taskId,
+							phase: failed ? "failed" : "done",
+							preview,
+							fullOutput: runResult.output,
+						});
+
+						const statusLabel = failed ? "failed" : "completed";
+						await this.recordRoleMessage(
+							"hub_role_output",
+							`[${role.name}] (${statusLabel})\nTask: ${task.task}\n\n${runResult.output}`,
+							{ role: role.name, taskId, task: task.task, exitCode: runResult.exitCode },
+						);
+
+						if (!failed) outputsByRole.set(task.role, runResult.output);
+
+						return {
+							role: task.role,
+							task: task.task,
+							taskId,
+							exitCode: runResult.exitCode,
+							output: runResult.output,
+							errorMessage: runResult.errorMessage,
+						} satisfies RoleTaskResult;
+					},
+				);
+				results.push(...batchResults);
+			}
+
+			const synthesisMessage = buildSynthesisPrompt(userMessage, plan, results);
+			await this.session.prompt(synthesisMessage, { source: "rpc" });
+		} else {
+			// === Direct mode: each assigned role processes the user message independently ===
+			const results: RoleTaskResult[] = [];
+
+			for (const role of discovery.roles) {
 				const taskId = crypto.randomUUID();
-				const role = roleMap.get(task.role)!;
 
-				this.onBroadcast({
-					type: "role_progress",
-					role: task.role,
-					taskId,
-					phase: "started",
-				});
-
-				const contextParts: string[] = [];
-				if (roomContext) {
-					contextParts.push(roomContext);
-				}
-				for (const dep of task.dependsOn ?? []) {
-					const prior = outputsByRole.get(dep);
-					if (prior) {
-						contextParts.push(`Output from role "${dep}":\n${prior}`);
-					}
-				}
-				const contextPrefix = combineContextPrefix(...contextParts);
+				this.onBroadcast({ type: "role_progress", role: role.name, taskId, phase: "started" });
 
 				const runResult = await this.runRole({
 					role,
-					task: task.task,
+					task: userMessage,
 					cwd: this.cwd,
 					agentDir: this.agentDir,
-					contextPrefix,
+					contextPrefix: roomContext,
 					signal,
 					roomSkillsDir: this.roomSkillsDir(),
 				});
@@ -294,7 +321,7 @@ export class RoleOrchestrator {
 
 				this.onBroadcast({
 					type: "role_progress",
-					role: task.role,
+					role: role.name,
 					taskId,
 					phase: failed ? "failed" : "done",
 					preview,
@@ -302,29 +329,34 @@ export class RoleOrchestrator {
 				});
 
 				const statusLabel = failed ? "failed" : "completed";
-				await this.recordRoleMessage(
-					"hub_role_output",
-					`[${role.name}] (${statusLabel})\nTask: ${task.task}\n\n${runResult.output}`,
-					{ role: role.name, taskId, task: task.task, exitCode: runResult.exitCode },
-				);
+				await this.recordRoleMessage("hub_role_output", `[${role.name}] (${statusLabel})\n\n${runResult.output}`, {
+					role: role.name,
+					taskId,
+					exitCode: runResult.exitCode,
+				});
 
-				if (!failed) {
-					outputsByRole.set(task.role, runResult.output);
-				}
-
-				return {
-					role: task.role,
-					task: task.task,
+				results.push({
+					role: role.name,
+					task: userMessage,
 					taskId,
 					exitCode: runResult.exitCode,
 					output: runResult.output,
 					errorMessage: runResult.errorMessage,
-				} satisfies RoleTaskResult;
-			});
-			results.push(...batchResults);
-		}
+				} satisfies RoleTaskResult);
+			}
 
-		const synthesisMessage = buildSynthesisPrompt(userMessage, plan, results);
-		await this.session.prompt(synthesisMessage, { source: "rpc" });
+			if (results.length === 1) {
+				const r = results[0]!;
+				if (r.exitCode === 0) {
+					await this.session.prompt(r.output, { source: "rpc" });
+				}
+			} else {
+				const sections = results.map(
+					(r) => `### Role: ${r.role} (${r.exitCode === 0 ? "completed" : "failed"})\n\n${r.output}`,
+				);
+				const combined = `[Multi-role direct responses]\n\nOriginal request:\n${userMessage}\n\n${sections.join("\n\n---\n\n")}`;
+				await this.session.prompt(combined, { source: "rpc" });
+			}
+		}
 	}
 }

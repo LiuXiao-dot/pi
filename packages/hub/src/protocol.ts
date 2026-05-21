@@ -75,7 +75,9 @@ export type HubScopedClientMessage =
 	| { type: "delete_role"; token: string; name: string; id?: string }
 	| { type: "add_room_role"; token: string; roomId: string; roleName: string; id?: string }
 	| { type: "remove_room_role"; token: string; roomId: string; roleName: string; id?: string }
-	| { type: "set_room_roles"; token: string; roomId: string; roleNames: string[]; id?: string };
+	| { type: "set_room_roles"; token: string; roomId: string; roleNames: string[]; id?: string }
+	| { type: "list_skills"; token: string; id?: string }
+	| { type: "get_skill_content"; token: string; name: string; id?: string };
 
 export function isHubScopedMessage(message: HubClientMessage): message is HubScopedClientMessage {
 	return (
@@ -90,7 +92,9 @@ export function isHubScopedMessage(message: HubClientMessage): message is HubSco
 		message.type === "delete_role" ||
 		message.type === "add_room_role" ||
 		message.type === "remove_room_role" ||
-		message.type === "set_room_roles"
+		message.type === "set_room_roles" ||
+		message.type === "list_skills" ||
+		message.type === "get_skill_content"
 	);
 }
 
@@ -312,6 +316,19 @@ export interface HubRoleContentPayload {
 export interface HubRoleGap {
 	type: "role_gap";
 	uncovered: HubTaskPlanGap[];
+}
+
+export interface HubSkillSummary {
+	name: string;
+	source: "user" | "project";
+	description?: string;
+}
+
+export interface HubSkillContent {
+	name: string;
+	source: "user" | "project";
+	filePath: string;
+	content: string;
 }
 
 export type HubExtensionUIOutbound = HubExtensionUIRequest & {

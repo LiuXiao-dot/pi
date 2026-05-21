@@ -137,3 +137,9 @@ export interface HubImageContent {
 	data: string; // base64
 	mimeType: string;
 }
+
+export interface HubSkillSummary {
+	name: string;
+	source: "user" | "project";
+	description?: string;
+}

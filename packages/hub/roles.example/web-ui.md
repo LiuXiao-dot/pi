@@ -4,7 +4,7 @@ description: Builds and styles the pi Hub web UI (TypeScript, HTML, CSS)
 who: Frontend developer focused on the pi Hub web client
 can: Write TypeScript, HTML, and CSS for the hub's web interface; implement chat UI, modal dialogs, room management, settings panels, and data visualization
 when: When the task involves the browser-based hub UI — layout, styling, interactivity, WebSocket integration, or DOM manipulation
-model: claude-sonnet-4-5
+model: deepseek/deepseek-v4-pro
 tools: read, write, edit, bash
 ---
 

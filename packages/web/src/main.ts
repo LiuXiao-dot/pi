@@ -774,6 +774,79 @@ function renderWorkspace(
 		}
 	});
 
+	// Shared skill picker
+	function showSkillPickerModal(onSelect: (names: string[]) => void, current: string[]): void {
+		const backdrop = el("div", "modal-backdrop");
+		const modal = el("div", "modal config-modal");
+		const title = el("h3");
+		title.textContent = "Select skills";
+		modal.appendChild(title);
+
+		const list = el("div", "skill-picker-list");
+		const checked = new Set(current);
+		const items: Array<{ name: string; cb: HTMLInputElement }> = [];
+
+		function renderAvailable(): void {
+			list.innerHTML = "";
+			items.length = 0;
+			void client.listSkills().then((skills) => {
+				if (skills.length === 0) {
+					list.textContent = "No skills found in .pi/skills/ or ~/.pi/agent/skills/";
+					return;
+				}
+				for (const s of skills) {
+					const label = el("label", "skill-picker-item");
+					const cb = el("input") as HTMLInputElement;
+					cb.type = "checkbox";
+					cb.checked = checked.has(s.name);
+					const nameSpan = el("span");
+					nameSpan.textContent = s.name;
+					const descSpan = el("span", "skill-picker-desc");
+					descSpan.textContent = s.description ? ` — ${s.description}` : ` (${s.source})`;
+					label.append(cb, nameSpan, descSpan);
+					label.addEventListener("change", () => {
+						if (cb.checked) checked.add(s.name);
+						else checked.delete(s.name);
+					});
+					list.appendChild(label);
+					items.push({ name: s.name, cb });
+				}
+			});
+		}
+
+		modal.appendChild(list);
+
+		const actions = el("div", "modal-actions");
+		const confirmBtn = el("button", "primary-btn");
+		confirmBtn.textContent = "Confirm";
+		confirmBtn.onclick = () => {
+			onSelect(Array.from(checked));
+			backdrop.remove();
+		};
+		const cancelBtn = el("button", "secondary-btn");
+		cancelBtn.textContent = "Cancel";
+		cancelBtn.onclick = () => backdrop.remove();
+		actions.append(confirmBtn, cancelBtn);
+		modal.appendChild(actions);
+
+		backdrop.appendChild(modal);
+		document.body.appendChild(backdrop);
+		renderAvailable();
+	}
+
+	function renderSkillChips(container: HTMLElement, names: string[], onRemove: (name: string) => void): void {
+		container.innerHTML = "";
+		for (const name of names) {
+			const chip = el("span", "skill-chip");
+			chip.textContent = name;
+			const removeBtn = el("button", "skill-chip-remove");
+			removeBtn.textContent = "×";
+			removeBtn.onclick = () => onRemove(name);
+			chip.appendChild(removeBtn);
+			container.appendChild(chip);
+		}
+	}
+
 	// Room config modal elements (created once, reused)
 	const roomSkillsInput = el("input") as HTMLInputElement;
 	roomSkillsInput.placeholder = "skills (comma-separated)";
@@ -799,12 +872,41 @@ function renderWorkspace(
 		cfgHeading.textContent = "Configuration";
 		cfgSection.appendChild(cfgHeading);
 
+		// Skills section: chips + browse button
 		const skillsLabel = el("label", "config-field");
 		skillsLabel.textContent = "Skills";
-		const skillsClone = roomSkillsInput.cloneNode() as HTMLInputElement;
-		skillsClone.value = roomSkillsInput.value;
-		skillsClone.placeholder = "skills (comma-separated)";
-		skillsLabel.appendChild(skillsClone);
+		const skillsChips = el("div", "skill-chips");
+		const skillsBrowseRow = el("div", "sidebar-row");
+		const browseSkillsBtn = el("button", "secondary-btn");
+		browseSkillsBtn.type = "button";
+		browseSkillsBtn.textContent = "Browse";
+		skillsBrowseRow.appendChild(browseSkillsBtn);
+		let selectedSkills: string[] = [];
+
+		function renderRoomSkillChips(): void {
+			renderSkillChips(skillsChips, selectedSkills, (name) => {
+				selectedSkills = selectedSkills.filter((s) => s !== name);
+				renderRoomSkillChips();
+			});
+		}
+
+		function loadRoomSkills(): void {
+			void (async () => {
+				const config = await client.getRoomConfig(selectedRoomId!);
+				selectedSkills = config.skills ?? [];
+				renderRoomSkillChips();
+			})();
+		}
+
+		browseSkillsBtn.onclick = () => {
+			showSkillPickerModal((names) => {
+				selectedSkills = names;
+				renderRoomSkillChips();
+			}, selectedSkills);
+		};
+
+		loadRoomSkills();
+		skillsLabel.append(skillsChips, skillsBrowseRow);
 		cfgSection.appendChild(skillsLabel);
 
 		const rulesLabel = el("label", "config-field");
@@ -888,20 +990,14 @@ function renderWorkspace(
 		saveBtn.onclick = () => {
 			void (async () => {
 				try {
-					const skills = skillsClone.value
-						.split(",")
-						.map((s) => s.trim())
-						.filter(Boolean);
 					// Fetch current config to preserve roleNames (added/removed via add_room_role)
 					const currentConfig = await client.getRoomConfig(selectedRoomId!);
 					await client.setRoomConfig(selectedRoomId!, {
 						roleNames: currentConfig.roleNames,
-						skills: skills.length > 0 ? skills : undefined,
+						skills: selectedSkills.length > 0 ? selectedSkills : undefined,
 						rules: rulesClone.value.trim() || undefined,
 						rolesEnabled: rolesCb.checked ? true : undefined,
 					});
-					// Sync back the static inputs
-					roomSkillsInput.value = skillsClone.value;
 					roomRulesInput.value = rulesClone.value;
 					roomRolesEnabled.checked = rolesCb.checked;
 					backdrop.remove();
@@ -1009,10 +1105,60 @@ function renderWorkspace(
 		editor.spellcheck = false;
 		modal.appendChild(editor);
 
+		// Skills section in role editor
+		const roleSkillsLabel = el("label", "config-field");
+		roleSkillsLabel.textContent = "Skills";
+		const roleSkillsChips = el("div", "skill-chips");
+		const roleSkillsBtn = el("button", "secondary-btn");
+		roleSkillsBtn.type = "button";
+		roleSkillsBtn.textContent = "Browse skills";
+		let roleSelectedSkills: string[] = [];
+
+		function renderRoleSkillChips(): void {
+			renderSkillChips(roleSkillsChips, roleSelectedSkills, (name) => {
+				roleSelectedSkills = roleSelectedSkills.filter((s) => s !== name);
+				updateRoleSkillsYaml();
+			});
+		}
+
+		function reloadRoleSkills(): void {
+			const match = editor.value.match(/^skills:\s*(.+)$/m);
+			if (match) {
+				roleSelectedSkills = match[1]!
+					.split(",")
+					.map((s) => s.trim())
+					.filter(Boolean);
+			} else {
+				roleSelectedSkills = [];
+			}
+			renderRoleSkillChips();
+		}
+
+		function updateRoleSkillsYaml(): void {
+			const yaml = roleSelectedSkills.length > 0 ? `skills: ${roleSelectedSkills.join(", ")}` : "skills: ";
+			if (/^skills:/m.test(editor.value)) {
+				editor.value = editor.value.replace(/^skills:.*$/m, yaml);
+			} else {
+				editor.value = editor.value.replace(/^---\n/, `---\n${yaml}\n`);
+			}
+			renderRoleSkillChips();
+		}
+
+		roleSkillsBtn.onclick = () => {
+			showSkillPickerModal((names) => {
+				roleSelectedSkills = names;
+				updateRoleSkillsYaml();
+			}, roleSelectedSkills);
+		};
+
+		roleSkillsLabel.append(roleSkillsChips, roleSkillsBtn);
+		modal.appendChild(roleSkillsLabel);
+
 		async function loadRole(name: string): Promise<void> {
 			const role = await client.getRole(name);
 			editor.value = role.content;
 			meta.textContent = `${role.source} · ${role.filePath}`;
+			reloadRoleSkills();
 		}
 
 		async function refreshSelect(): Promise<void> {
@@ -1041,6 +1187,7 @@ function renderWorkspace(
 			editor.value = `---\nname: \ndescription: \nwho: \ncan: \nwhen: \nmodel: \ntools: \n---\n\n`;
 			meta.textContent = "Enter a name above and press Enter to create the role.";
 			select.value = "";
+			reloadRoleSkills();
 		};
 
 		newNameInput.addEventListener("keydown", (e) => {
@@ -1114,10 +1261,12 @@ function renderWorkspace(
 	}
 
 	let streamingAssistantEl: HTMLElement | null = null;
+	let streamingAssistantHost: string | null = null;
 	let toolMsgMap: Map<
 		string,
 		{ div: HTMLElement; detailWrap: HTMLElement; argsPre: HTMLElement; toolName: string; args: unknown }
 	> | null = null;
+	let lastMetaHost: string | null = null;
 	let turnHostName: string | null = null;
 	let clientId = "";
 	let presenceCount = 0;
@@ -1293,7 +1442,15 @@ function renderWorkspace(
 	function appendMessage(role: string, text: string, meta?: string, animate = true): HTMLElement {
 		const div = el("div", `msg ${role}${animate ? " msg-animate-in" : ""}`);
 		const label = meta ?? (role === "assistant" ? assistantMetaLabel() : undefined);
+		// Only show meta label when the responder changes since last assistant message
+		let showMeta = false;
 		if (label) {
+			if (label !== lastMetaHost) {
+				showMeta = true;
+				lastMetaHost = label;
+			}
+		}
+		if (showMeta) {
 			const m = el("div", "meta");
 			m.textContent = label;
 			div.appendChild(m);
@@ -1316,6 +1473,8 @@ function renderWorkspace(
 	function renderHistory(msgs: unknown[]): void {
 		messages.innerHTML = "";
 		streamingAssistantEl = null;
+		streamingAssistantHost = null;
+		lastMetaHost = null;
 		for (const msg of msgs) {
 			const m = msg as { role?: string; customType?: string };
 			if (m.role === "user" || m.role === "assistant") {
@@ -1463,7 +1622,9 @@ function renderWorkspace(
 		if (event.type === "message_start" && event.message) {
 			const m = event.message as { role?: string; customType?: string };
 			if (m.role === "assistant") {
-				streamingAssistantEl = appendMessage("assistant", "", assistantMetaLabel(hostDisplayName));
+				// Defer element creation until first content arrives, to avoid empty bubbles
+				streamingAssistantEl = null;
+				streamingAssistantHost = hostDisplayName;
 				setStreamingVisual(true);
 			} else if (m.role === "custom") {
 				const div = el("div", `msg ${messageRoleClass(m)}`);
@@ -1480,20 +1641,26 @@ function renderWorkspace(
 		if (event.type === "message_update" && event.message) {
 			const m = event.message as { role?: string };
 			if (m.role === "assistant") {
-				if (!streamingAssistantEl) {
-					streamingAssistantEl = appendMessage("assistant", "", assistantMetaLabel(hostDisplayName));
+				const text = getMessageText(event.message);
+				if (!streamingAssistantEl && text) {
+					// Create element now that we have actual content
+					streamingAssistantEl = appendMessage("assistant", text, assistantMetaLabel(streamingAssistantHost));
+				} else if (streamingAssistantEl) {
+					updateStreamingAssistant(event.message, hostDisplayName);
 				}
-				updateStreamingAssistant(event.message, hostDisplayName);
 			}
 		}
 		if (event.type === "message_end" && event.message) {
 			const m = event.message as { role?: string };
 			if (m.role === "assistant") {
-				if (!streamingAssistantEl) {
-					streamingAssistantEl = appendMessage("assistant", "", assistantMetaLabel(hostDisplayName));
+				const text = getMessageText(event.message);
+				if (!streamingAssistantEl && text) {
+					streamingAssistantEl = appendMessage("assistant", text, assistantMetaLabel(streamingAssistantHost));
+				} else if (streamingAssistantEl) {
+					updateStreamingAssistant(event.message, hostDisplayName);
 				}
-				updateStreamingAssistant(event.message, hostDisplayName);
 				streamingAssistantEl = null;
+				streamingAssistantHost = null;
 				setStreamingVisual(false);
 			} else if (m.role === "user") {
 				const text = getMessageText(m);
@@ -1716,6 +1883,8 @@ function renderWorkspace(
 		tokenOutput.textContent = "Output: 0";
 		tokenTotal.textContent = "Total: 0";
 		streamingAssistantEl = null;
+		streamingAssistantHost = null;
+		lastMetaHost = null;
 		toolMsgMap = null;
 		setStreamingVisual(false);
 	}

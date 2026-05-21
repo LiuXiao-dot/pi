@@ -354,6 +354,22 @@ export class HubClient {
 		return data.config ?? {};
 	}
 
+	async listSkills(): Promise<Array<{ name: string; source: string; description?: string }>> {
+		const data = await this.sendCommand<{ skills: Array<{ name: string; source: string; description?: string }> }>({
+			type: "list_skills",
+			token: this.token,
+		});
+		return data.skills ?? [];
+	}
+
+	async getSkillContent(name: string): Promise<{ name: string; source: string; filePath: string; content: string }> {
+		return this.sendCommand({
+			type: "get_skill_content",
+			token: this.token,
+			name,
+		});
+	}
+
 	async listRoles(): Promise<HubRoleSummaryPayload[]> {
 		const data = await this.sendCommand<{ roles: HubRoleSummaryPayload[] }>({
 			type: "list_roles",

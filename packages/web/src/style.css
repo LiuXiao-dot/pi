@@ -799,6 +799,90 @@ select {
   letter-spacing: -0.01em;
 }
 
+/* === Skill Chips & Picker === */
+
+.skill-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-bottom: 0.35rem;
+}
+
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.3rem 0.15rem 0.5rem;
+  background: var(--accent-50);
+  border: 1px solid var(--accent-100);
+  border-radius: var(--radius-pill);
+  font-size: 0.75rem;
+  color: var(--accent);
+  line-height: 1.4;
+}
+
+.skill-chip-remove {
+  flex-shrink: 0;
+  width: 1rem;
+  height: 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.8rem;
+  line-height: 1;
+  border-radius: 50%;
+  opacity: 0.6;
+  transition: opacity var(--duration-fast), background var(--duration-fast);
+}
+
+.skill-chip-remove:hover {
+  opacity: 1;
+  background: var(--accent-100);
+}
+
+.skill-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-height: 250px;
+  overflow-y: auto;
+  margin: 0.5rem 0;
+}
+
+.skill-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-body);
+  transition: background var(--duration-fast);
+}
+
+.skill-picker-item:hover {
+  background: var(--accent-50);
+}
+
+.skill-picker-item input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.skill-picker-desc {
+  font-size: 0.78rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .modal-actions {
   display: flex;
   gap: 0.5rem;
