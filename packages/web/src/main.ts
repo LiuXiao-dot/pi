@@ -1,5 +1,5 @@
 import { defaultWsUrl, HubClient } from "./hub-client.ts";
-import type { HubModelInfo, HubServerMessage, HubSessionState } from "./protocol.ts";
+import type { HubModelInfo, HubModelsConfigPayload, HubServerMessage, HubSessionState } from "./protocol.ts";
 
 interface StoredConnect {
 	hubUrl: string;
@@ -144,11 +144,19 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 	const modelBar = el("div", "model-bar");
 	const modelRow = el("div", "model-row");
 	const modelLabel = el("label", "model-label");
-	modelLabel.textContent = "Model";
+	modelLabel.textContent = "Session model";
 	const modelSelect = el("select") as HTMLSelectElement;
 	modelLabel.appendChild(modelSelect);
 	modelRow.appendChild(modelLabel);
 	modelBar.appendChild(modelRow);
+
+	const roleModelsDetails = el("details", "role-models-details");
+	const roleModelsSummary = el("summary");
+	roleModelsSummary.textContent = "Role models";
+	roleModelsDetails.appendChild(roleModelsSummary);
+	const roleModelsForm = el("div", "role-models-form");
+	roleModelsDetails.appendChild(roleModelsForm);
+	modelBar.appendChild(roleModelsDetails);
 
 	const endpointDetails = el("details", "endpoint-details");
 	const endpointSummary = el("summary");
@@ -181,6 +189,15 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 
 	const messages = el("div", "messages");
 	panel.appendChild(messages);
+
+	const roleGapBar = el("div", "role-gap-bar hidden");
+	panel.appendChild(roleGapBar);
+
+	const rolePlanPanel = el("div", "role-plan-panel hidden");
+	panel.appendChild(rolePlanPanel);
+
+	const roleProgressBar = el("div", "role-progress-bar hidden");
+	panel.appendChild(roleProgressBar);
 
 	const queueBar = el("div", "queue-bar");
 	queueBar.textContent = "Queue empty";
@@ -243,14 +260,79 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 		}
 	}
 
-	async function refreshModelList(selected?: { provider: string; id: string }): Promise<void> {
-		availableModels = await client.getAvailableModels();
+	function fillModelSelectElement(
+		select: HTMLSelectElement,
+		models: HubModelInfo[],
+		selectedRef?: string,
+		includeDefault = false,
+	): void {
+		select.innerHTML = "";
+		if (includeDefault) {
+			const empty = el("option") as HTMLOptionElement;
+			empty.value = "";
+			empty.textContent = "(role file default)";
+			select.appendChild(empty);
+		}
+		for (const m of models) {
+			const option = el("option") as HTMLOptionElement;
+			option.value = modelOptionValue(m.provider, m.id);
+			option.textContent = formatModelLabel(m);
+			select.appendChild(option);
+		}
+		if (selectedRef) {
+			const parsed = parseModelOptionValue(selectedRef);
+			if (parsed) {
+				const value = modelOptionValue(parsed.provider, parsed.modelId);
+				if ([...select.options].some((o) => o.value === value)) {
+					select.value = value;
+				}
+			}
+		}
+	}
+
+	function renderRoleModelSelects(config: HubModelsConfigPayload): void {
+		roleModelsForm.innerHTML = "";
+		for (const role of config.roles) {
+			const row = el("div", "role-model-row");
+			const label = el("label", "role-model-label");
+			label.textContent = role.name;
+			const select = el("select") as HTMLSelectElement;
+			label.appendChild(select);
+			fillModelSelectElement(select, config.models, role.modelRef, true);
+			select.addEventListener("change", () => {
+				void (async () => {
+					const parsed = parseModelOptionValue(select.value);
+					try {
+						const updated = await client.setRoleModel(
+							role.name,
+							parsed?.provider ?? null,
+							parsed?.modelId ?? null,
+						);
+						renderRoleModelSelects(updated);
+					} catch (e) {
+						showError(e instanceof Error ? e.message : String(e));
+					}
+				})();
+			});
+			row.appendChild(label);
+			roleModelsForm.appendChild(row);
+		}
+	}
+
+	async function refreshModelsUi(selected?: { provider: string; id: string }): Promise<void> {
+		const config = await client.getModelsConfig();
+		availableModels = config.models;
 		fillModelSelect(availableModels, selected);
+		renderRoleModelSelects(config);
 		const current = availableModels.find((m) => selected && m.provider === selected.provider && m.id === selected.id);
 		if (current) {
 			providerInput.value = current.provider;
 			baseUrlInput.value = current.baseUrl;
 		}
+	}
+
+	async function refreshModelList(selected?: { provider: string; id: string }): Promise<void> {
+		await refreshModelsUi(selected);
 	}
 
 	function syncEndpointFieldsFromSelection(): void {
@@ -306,6 +388,63 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 			queueBar.textContent = `${pending.length} message(s) queued`;
 		} else {
 			queueBar.textContent = "Queue empty";
+		}
+	}
+
+	function showRoleGap(uncovered: Array<{ description: string; reason: string }>): void {
+		if (uncovered.length === 0) {
+			roleGapBar.classList.add("hidden");
+			roleGapBar.textContent = "";
+			return;
+		}
+		const lines = uncovered.map((g) => `${g.description} — ${g.reason}`);
+		roleGapBar.textContent = `Uncovered work (no matching role): ${lines.join("; ")}`;
+		roleGapBar.classList.remove("hidden");
+	}
+
+	function showRolePlan(plan: {
+		summary: string;
+		tasks: Array<{ role: string; task: string; dependsOn?: string[] }>;
+	}): void {
+		const parts = [`Plan: ${plan.summary}`];
+		for (const t of plan.tasks) {
+			const deps = t.dependsOn?.length ? ` (after: ${t.dependsOn.join(", ")})` : "";
+			parts.push(`• ${t.role}${deps}: ${t.task}`);
+		}
+		rolePlanPanel.textContent = parts.join("\n");
+		rolePlanPanel.classList.remove("hidden");
+	}
+
+	function updateRoleProgress(msg: HubServerMessage): void {
+		if (msg.type !== "role_progress") return;
+		const role = String(msg.role ?? "");
+		const phase = String(msg.phase ?? "");
+		const preview = msg.preview ? ` — ${String(msg.preview)}` : "";
+		roleProgressBar.textContent = `Role ${role}: ${phase}${preview}`;
+		roleProgressBar.classList.remove("hidden");
+		if (phase === "done" || phase === "failed") {
+			setTimeout(() => {
+				if (roleProgressBar.textContent?.includes(`${role}: ${phase}`)) {
+					roleProgressBar.classList.add("hidden");
+				}
+			}, 8000);
+		}
+	}
+
+	function handleRoleOrchestration(msg: HubServerMessage): void {
+		if (msg.type === "role_gap") {
+			showRoleGap((msg.uncovered as Array<{ description: string; reason: string }>) ?? []);
+		}
+		if (msg.type === "role_plan") {
+			showRolePlan(
+				(msg.plan as {
+					summary: string;
+					tasks: Array<{ role: string; task: string; dependsOn?: string[] }>;
+				}) ?? { summary: "", tasks: [] },
+			);
+		}
+		if (msg.type === "role_progress") {
+			updateRoleProgress(msg);
 		}
 	}
 
@@ -449,10 +588,10 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 				return;
 			}
 			try {
-				availableModels = await client.setProviderBaseUrl(provider, baseUrl);
+				await client.setProviderBaseUrl(provider, baseUrl);
 				saveProviderUrlPref(provider, baseUrl);
 				const parsed = parseModelOptionValue(modelSelect.value);
-				fillModelSelect(availableModels, parsed ? { provider: parsed.provider, id: parsed.modelId } : undefined);
+				await refreshModelsUi(parsed ? { provider: parsed.provider, id: parsed.modelId } : undefined);
 				syncEndpointFieldsFromSelection();
 			} catch (e) {
 				showError(e instanceof Error ? e.message : String(e));
@@ -489,6 +628,7 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 			}
 		}
 		updateQueue(msg);
+		handleRoleOrchestration(msg);
 		handleAgentEvent(msg);
 		if (msg.type === "extension_ui_request") {
 			showExtensionModal(msg);

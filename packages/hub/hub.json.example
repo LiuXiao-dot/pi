@@ -3,5 +3,26 @@
 	"port": 3141,
 	"host": "0.0.0.0",
 	"cwd": "E:\\path\\to\\your\\project",
-	"defaultRoomId": "default"
+	"defaultRoomId": "default",
+	"models": {
+		"catalog": [
+			"anthropic/claude-opus-4-7",
+			"anthropic/claude-sonnet-4-5",
+			"openai/gpt-5.4",
+			"deepseek/deepseek-v4-pro",
+			"deepseek/deepseek-v4-flash"
+		],
+		"session": "anthropic/claude-opus-4-7",
+		"roleModels": {
+			"pm": "anthropic/claude-sonnet-4-5",
+			"developer": "anthropic/claude-opus-4-7",
+			"reviewer": "anthropic/claude-sonnet-4-5"
+		}
+	},
+	"roles": {
+		"enabled": false,
+		"rolesDir": ".pi/roles",
+		"pmRole": "pm",
+		"maxParallel": 4
+	}
 }

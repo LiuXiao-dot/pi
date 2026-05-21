@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
+import { resolveModelsConfig, resolveRolesConfig } from "../src/config.ts";
 import { startHubServer } from "../src/server.ts";
 import { createTestAgentSession } from "./harness.ts";
 
@@ -78,6 +79,8 @@ try {
 		token: TOKEN,
 		cwd: tempDir,
 		publicDir: resolvePublicDir(),
+		modelsConfig: resolveModelsConfig(),
+		rolesConfig: resolveRolesConfig(),
 		createSession: (cwd) => createTestAgentSession(cwd, faux),
 	});
 

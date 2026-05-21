@@ -1,4 +1,10 @@
-import type { HubClientMessage, HubCommandResultMessage, HubModelInfo, HubServerMessage } from "./protocol.ts";
+import type {
+	HubClientMessage,
+	HubCommandResultMessage,
+	HubModelInfo,
+	HubModelsConfigPayload,
+	HubServerMessage,
+} from "./protocol.ts";
 
 export type MessageHandler = (msg: HubServerMessage) => void;
 
@@ -160,6 +166,26 @@ export class HubClient {
 	async getAvailableModels(): Promise<HubModelInfo[]> {
 		const data = await this.sendCommand<{ models: HubModelInfo[] }>({ type: "get_available_models" });
 		return data.models ?? [];
+	}
+
+	async getModelsConfig(): Promise<HubModelsConfigPayload> {
+		return this.sendCommand<HubModelsConfigPayload>({ type: "get_models_config" });
+	}
+
+	async setRoleModel(
+		roleName: string,
+		provider: string | null,
+		modelId: string | null,
+	): Promise<HubModelsConfigPayload> {
+		if (provider === null || modelId === null) {
+			return this.sendCommand<HubModelsConfigPayload>({ type: "set_role_model", roleName });
+		}
+		return this.sendCommand<HubModelsConfigPayload>({
+			type: "set_role_model",
+			roleName,
+			provider,
+			modelId,
+		});
 	}
 
 	async setModel(provider: string, modelId: string): Promise<void> {

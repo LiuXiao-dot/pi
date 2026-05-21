@@ -1,7 +1,14 @@
 import type { AgentSession, AgentSessionEvent, CreateAgentSessionResult } from "@earendil-works/pi-coding-agent";
 import type { WebSocket } from "ws";
+import type { ResolvedHubModelsConfig, ResolvedHubRolesConfig } from "./config.ts";
 import { ExtensionUiRouter } from "./extension-ui.ts";
 import { listHubModels } from "./model-info.ts";
+import {
+	applyRoleModelOverrides,
+	buildRoleModelEntries,
+	parseModelRef,
+	persistRoleModelOverride,
+} from "./models-config.ts";
 import { PromptQueue } from "./prompt-queue.ts";
 import type {
 	HubClientMessage,
@@ -11,8 +18,13 @@ import type {
 	HubPresenceMember,
 	HubPresenceUpdate,
 	HubQueueUpdate,
+	HubRoleGap,
+	HubRolePlan,
+	HubRoleProgress,
 	HubServerMessage,
 } from "./protocol.ts";
+import { RoleOrchestrator } from "./role-orchestrator.ts";
+import { discoverRoles } from "./roles/discovery.ts";
 import { safeStringify } from "./safe-json.ts";
 import { buildSessionState } from "./state-snapshot.ts";
 
@@ -25,11 +37,18 @@ export interface RoomClient {
 export interface RoomOptions {
 	roomId: string;
 	sessionResult: CreateAgentSessionResult;
+	cwd: string;
+	rolesConfig: ResolvedHubRolesConfig;
+	modelsConfig: ResolvedHubModelsConfig;
 }
 
 export class Room {
 	readonly roomId: string;
 	readonly session: AgentSession;
+	readonly cwd: string;
+	readonly modelsConfig: ResolvedHubModelsConfig;
+	private readonly rolesConfig: ResolvedHubRolesConfig;
+	private roleModelOverrides: Record<string, string>;
 	private readonly clients = new Map<string, RoomClient>();
 	private unsubscribeSession: (() => void) | undefined;
 	private readonly extensionUi: ExtensionUiRouter;
@@ -38,13 +57,67 @@ export class Room {
 	constructor(options: RoomOptions) {
 		this.roomId = options.roomId;
 		this.session = options.sessionResult.session;
+		this.cwd = options.cwd;
+		this.modelsConfig = options.modelsConfig;
+		this.rolesConfig = options.rolesConfig;
+		this.roleModelOverrides = { ...options.modelsConfig.roleModels };
 
 		this.extensionUi = new ExtensionUiRouter(
 			(request, targetClientId) => this.broadcastExtensionUi(request, targetClientId),
 			() => this.queue.getTurnOriginClientId(),
 		);
 
-		this.queue = new PromptQueue(this.session, (update) => this.broadcast(update));
+		const roleOrchestrator = options.rolesConfig.enabled
+			? new RoleOrchestrator({
+					session: this.session,
+					cwd: options.cwd,
+					rolesConfig: options.rolesConfig,
+					getRoleModelOverrides: () => this.roleModelOverrides,
+					onBroadcast: (msg) => this.broadcastRoleEvent(msg),
+				})
+			: undefined;
+
+		this.queue = new PromptQueue(this.session, (update) => this.broadcast(update), {
+			roleOrchestrator,
+		});
+	}
+
+	private broadcastRoleEvent(message: HubRolePlan | HubRoleGap | HubRoleProgress): void {
+		this.broadcast(message);
+	}
+
+	async listCatalogModels() {
+		return listHubModels(this.session.modelRegistry, this.modelsConfig.catalog);
+	}
+
+	async buildModelsConfigPayload() {
+		const models = await this.listCatalogModels();
+		const discovery = discoverRoles({
+			cwd: this.cwd,
+			rolesDir: this.rolesConfig.rolesDir,
+		});
+		const rolesWithModels = applyRoleModelOverrides(discovery.roles, this.roleModelOverrides);
+		return {
+			models,
+			catalog: this.modelsConfig.catalog,
+			sessionModelRef: this.modelsConfig.sessionModelRef,
+			roles: buildRoleModelEntries(rolesWithModels, this.roleModelOverrides),
+		};
+	}
+
+	/** Apply models.session from hub.json if configured. */
+	async applyConfiguredSessionModel(): Promise<void> {
+		const ref = this.modelsConfig.sessionModelRef ? parseModelRef(this.modelsConfig.sessionModelRef) : undefined;
+		if (!ref) {
+			return;
+		}
+		const available = await this.session.modelRegistry.getAvailable();
+		const model = available.find((m) => m.provider === ref.provider && m.id === ref.modelId);
+		if (!model) {
+			console.warn(`[pi-hub] models.session not found: ${this.modelsConfig.sessionModelRef}`);
+			return;
+		}
+		await this.session.setModel(model);
 	}
 
 	async start(): Promise<void> {
@@ -182,7 +255,7 @@ export class Room {
 
 			case "get_available_models": {
 				try {
-					const models = await listHubModels(this.session.modelRegistry);
+					const models = await this.listCatalogModels();
 					this.sendCommandResult(client, "get_available_models", message.id, true, undefined, { models });
 				} catch (err) {
 					const msg = err instanceof Error ? err.message : String(err);
@@ -191,8 +264,64 @@ export class Room {
 				return;
 			}
 
+			case "get_models_config": {
+				try {
+					const payload = await this.buildModelsConfigPayload();
+					this.sendCommandResult(client, "get_models_config", message.id, true, undefined, payload);
+				} catch (err) {
+					const msg = err instanceof Error ? err.message : String(err);
+					this.sendCommandResult(client, "get_models_config", message.id, false, msg);
+				}
+				return;
+			}
+
+			case "set_role_model": {
+				try {
+					const roleName = message.roleName.trim();
+					if (!roleName) {
+						this.sendCommandResult(client, "set_role_model", message.id, false, "roleName is required");
+						return;
+					}
+					let modelRef: string | null = null;
+					if (message.provider && message.modelId) {
+						modelRef = `${message.provider}/${message.modelId}`;
+						const catalogModels = await this.listCatalogModels();
+						const found = catalogModels.some((m) => m.provider === message.provider && m.id === message.modelId);
+						if (!found) {
+							this.sendCommandResult(
+								client,
+								"set_role_model",
+								message.id,
+								false,
+								`Model not in catalog: ${modelRef}`,
+							);
+							return;
+						}
+					}
+					this.roleModelOverrides = persistRoleModelOverride(this.cwd, roleName, modelRef);
+					const payload = await this.buildModelsConfigPayload();
+					this.sendCommandResult(client, "set_role_model", message.id, true, undefined, payload);
+				} catch (err) {
+					const msg = err instanceof Error ? err.message : String(err);
+					this.sendCommandResult(client, "set_role_model", message.id, false, msg);
+				}
+				return;
+			}
+
 			case "set_model": {
 				try {
+					const catalogModels = await this.listCatalogModels();
+					const modelInfo = catalogModels.find((m) => m.provider === message.provider && m.id === message.modelId);
+					if (!modelInfo) {
+						this.sendCommandResult(
+							client,
+							"set_model",
+							message.id,
+							false,
+							`Model not found in catalog: ${message.provider}/${message.modelId}`,
+						);
+						return;
+					}
 					const models = await this.session.modelRegistry.getAvailable();
 					const model = models.find((m) => m.provider === message.provider && m.id === message.modelId);
 					if (!model) {
@@ -251,7 +380,7 @@ export class Room {
 						}
 					}
 					this.broadcastStateUpdate();
-					const models = await listHubModels(this.session.modelRegistry);
+					const models = await this.listCatalogModels();
 					this.sendCommandResult(client, "set_provider_base_url", message.id, true, undefined, { models });
 				} catch (err) {
 					const msg = err instanceof Error ? err.message : String(err);
@@ -305,7 +434,7 @@ export class Room {
 		this.broadcast(update);
 	}
 
-	broadcast(message: HubServerMessage | HubQueueUpdate): void {
+	broadcast(message: HubServerMessage | HubQueueUpdate | HubRolePlan | HubRoleGap | HubRoleProgress): void {
 		const data = safeStringify(message);
 		if (!data) {
 			return;

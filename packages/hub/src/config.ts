@@ -2,6 +2,25 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
+/** Model catalog and per-role/session defaults in hub.json. */
+export interface HubModelsConfigFile {
+	/** Models shown in Web UI dropdowns (`provider/modelId`). Empty = all registry models with auth. */
+	catalog?: string[];
+	/** Main session (synthesis) model ref. */
+	session?: string;
+	/** Per-role subprocess model refs. */
+	roleModels?: Record<string, string>;
+}
+
+/** Multi-role orchestration settings in hub.json. */
+export interface HubRolesConfigFile {
+	enabled?: boolean;
+	rolesDir?: string;
+	pmRole?: string;
+	maxParallel?: number;
+	confirmProjectRoles?: boolean;
+}
+
 /** User-editable hub settings (JSON files). */
 export interface HubConfigFile {
 	token?: string;
@@ -12,9 +31,25 @@ export interface HubConfigFile {
 	defaultRoomId?: string;
 	/** Override static web root (normally set by CLI/build). */
 	publicDir?: string;
+	models?: HubModelsConfigFile;
+	roles?: HubRolesConfigFile;
 }
 
 export type HubTokenSource = "env" | "cli" | "config";
+
+export interface ResolvedHubModelsConfig {
+	catalog: string[];
+	sessionModelRef?: string;
+	roleModels: Record<string, string>;
+}
+
+export interface ResolvedHubRolesConfig {
+	enabled: boolean;
+	rolesDir: string;
+	pmRole: string;
+	maxParallel: number;
+	confirmProjectRoles: boolean;
+}
 
 export interface ResolvedHubConfig {
 	token?: string;
@@ -26,6 +61,8 @@ export interface ResolvedHubConfig {
 	session?: string;
 	defaultRoomId: string;
 	publicDir?: string;
+	models: ResolvedHubModelsConfig;
+	roles: ResolvedHubRolesConfig;
 	configPaths: string[];
 }
 
@@ -38,6 +75,34 @@ export function normalizeHubToken(token: string | undefined): string | undefined
 const DEFAULT_PORT = 3141;
 const DEFAULT_HOST = "0.0.0.0";
 const DEFAULT_ROOM_ID = "default";
+const DEFAULT_ROLES_DIR = ".pi/roles";
+const DEFAULT_PM_ROLE = "pm";
+const DEFAULT_MAX_PARALLEL = 4;
+
+export function resolveModelsConfig(file?: HubModelsConfigFile): ResolvedHubModelsConfig {
+	const catalog = (file?.catalog ?? []).map((e) => e.trim()).filter((e) => e.length > 0);
+	const sessionModelRef = file?.session?.trim() || undefined;
+	const roleModels: Record<string, string> = {};
+	if (file?.roleModels) {
+		for (const [name, ref] of Object.entries(file.roleModels)) {
+			const trimmed = ref.trim();
+			if (trimmed.length > 0) {
+				roleModels[name] = trimmed;
+			}
+		}
+	}
+	return { catalog, sessionModelRef, roleModels };
+}
+
+export function resolveRolesConfig(file?: HubRolesConfigFile): ResolvedHubRolesConfig {
+	return {
+		enabled: file?.enabled === true,
+		rolesDir: file?.rolesDir ?? DEFAULT_ROLES_DIR,
+		pmRole: file?.pmRole ?? DEFAULT_PM_ROLE,
+		maxParallel: file?.maxParallel ?? DEFAULT_MAX_PARALLEL,
+		confirmProjectRoles: file?.confirmProjectRoles !== false,
+	};
+}
 
 export function globalConfigPath(): string {
 	return join(homedir(), ".pi", "hub.json");
@@ -165,6 +230,8 @@ export function resolveHubConfig(overrides: CliOverrides, initialCwd: string): R
 		session,
 		defaultRoomId,
 		publicDir: publicDir ? resolve(publicDir) : undefined,
+		models: resolveModelsConfig(merged.models),
+		roles: resolveRolesConfig(merged.roles),
 		configPaths,
 	};
 }

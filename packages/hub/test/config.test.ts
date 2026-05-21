@@ -2,7 +2,14 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadConfigFile, normalizeHubToken, projectConfigPath, resolveHubConfig } from "../src/config.ts";
+import {
+	loadConfigFile,
+	normalizeHubToken,
+	projectConfigPath,
+	resolveHubConfig,
+	resolveModelsConfig,
+	resolveRolesConfig,
+} from "../src/config.ts";
 
 describe("resolveHubConfig", () => {
 	let tempDir: string;
@@ -25,6 +32,7 @@ describe("resolveHubConfig", () => {
 		expect(resolved.token).toBe("from-cli");
 		expect(resolved.port).toBe(5000);
 		expect(resolved.cwd).toBe(tempDir);
+		expect(resolved.roles.enabled).toBe(false);
 		expect(resolved.configPaths.some((p) => p.endsWith("hub.json"))).toBe(true);
 	});
 
@@ -58,6 +66,34 @@ describe("resolveHubConfig", () => {
 		const resolved = resolveHubConfig({}, tempDir);
 		expect(resolved.token).toBe("spaced");
 		expect(resolved.tokenSource).toBe("config");
+	});
+});
+
+describe("resolveModelsConfig", () => {
+	it("parses catalog and role models", () => {
+		const models = resolveModelsConfig({
+			catalog: [" anthropic/a ", "openai/b"],
+			session: "anthropic/a",
+			roleModels: { pm: "openai/b" },
+		});
+		expect(models.catalog).toEqual(["anthropic/a", "openai/b"]);
+		expect(models.sessionModelRef).toBe("anthropic/a");
+		expect(models.roleModels.pm).toBe("openai/b");
+	});
+});
+
+describe("resolveRolesConfig", () => {
+	it("defaults to disabled", () => {
+		const roles = resolveRolesConfig();
+		expect(roles.enabled).toBe(false);
+		expect(roles.pmRole).toBe("pm");
+		expect(roles.maxParallel).toBe(4);
+	});
+
+	it("enables when flag set", () => {
+		const roles = resolveRolesConfig({ enabled: true, maxParallel: 2 });
+		expect(roles.enabled).toBe(true);
+		expect(roles.maxParallel).toBe(2);
 	});
 });
 

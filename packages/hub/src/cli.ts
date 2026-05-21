@@ -155,6 +155,12 @@ async function runServer(parsed: ParsedCli): Promise<void> {
 		console.log(`[pi-hub] Token from config (length ${resolved.token.length}, ends with …${suffix})`);
 	}
 
+	if (resolved.roles.enabled) {
+		console.log(
+			`[pi-hub] Multi-role orchestration enabled (PM: ${resolved.roles.pmRole}, dir: ${resolved.roles.rolesDir})`,
+		);
+	}
+
 	const handle = await startHubServer({
 		port: resolved.port,
 		host: resolved.host,
@@ -163,6 +169,8 @@ async function runServer(parsed: ParsedCli): Promise<void> {
 		sessionPath: resolved.session,
 		publicDir,
 		defaultRoomId: resolved.defaultRoomId,
+		modelsConfig: resolved.models,
+		rolesConfig: resolved.roles,
 	});
 
 	const lanHost = resolved.host === "0.0.0.0" ? "127.0.0.1" : resolved.host;

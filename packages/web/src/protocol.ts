@@ -27,3 +27,54 @@ export interface HubCommandResultMessage extends HubServerMessage {
 	error?: string;
 	data?: unknown;
 }
+
+export interface HubTaskPlanTask {
+	role: string;
+	task: string;
+	dependsOn?: string[];
+}
+
+export interface HubTaskPlanGap {
+	description: string;
+	reason: string;
+}
+
+export interface HubTaskPlan {
+	summary: string;
+	tasks: HubTaskPlanTask[];
+	uncovered: HubTaskPlanGap[];
+}
+
+export interface HubRolePlanMessage extends HubServerMessage {
+	type: "role_plan";
+	plan: HubTaskPlan;
+}
+
+export type HubRoleProgressPhase = "started" | "done" | "failed";
+
+export interface HubRoleProgressMessage extends HubServerMessage {
+	type: "role_progress";
+	role: string;
+	taskId: string;
+	phase: HubRoleProgressPhase;
+	preview?: string;
+}
+
+export interface HubRoleGapMessage extends HubServerMessage {
+	type: "role_gap";
+	uncovered: HubTaskPlanGap[];
+}
+
+export interface HubRoleModelEntry {
+	name: string;
+	description: string;
+	modelRef?: string;
+	fileModelRef?: string;
+}
+
+export interface HubModelsConfigPayload {
+	models: HubModelInfo[];
+	catalog: string[];
+	sessionModelRef?: string;
+	roles: HubRoleModelEntry[];
+}

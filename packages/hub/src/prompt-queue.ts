@@ -1,6 +1,7 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { HubQueueItemSnapshot, HubQueueUpdate } from "./protocol.ts";
+import type { RoleOrchestrator } from "./role-orchestrator.ts";
 
 export type QueueCommand = "prompt" | "steer" | "follow_up";
 
@@ -17,6 +18,10 @@ export interface QueueItem {
 
 export type QueueUpdateListener = (update: HubQueueUpdate) => void;
 
+export interface PromptQueueOptions {
+	roleOrchestrator?: RoleOrchestrator;
+}
+
 export class PromptQueue {
 	private items: QueueItem[] = [];
 	private current: QueueItem | null = null;
@@ -25,10 +30,12 @@ export class PromptQueue {
 	private turnOriginClientId: string | null = null;
 	private readonly session: AgentSession;
 	private readonly onUpdate: QueueUpdateListener;
+	private readonly roleOrchestrator: RoleOrchestrator | undefined;
 
-	constructor(session: AgentSession, onUpdate: QueueUpdateListener) {
+	constructor(session: AgentSession, onUpdate: QueueUpdateListener, options?: PromptQueueOptions) {
 		this.session = session;
 		this.onUpdate = onUpdate;
+		this.roleOrchestrator = options?.roleOrchestrator;
 	}
 
 	getTurnOriginClientId(): string | null {
@@ -128,6 +135,12 @@ export class PromptQueue {
 	}
 
 	private async runPrompt(item: QueueItem): Promise<void> {
+		const orchestrator = this.roleOrchestrator;
+		if (orchestrator?.isReady()) {
+			await orchestrator.run(item.message);
+			return;
+		}
+
 		await this.session.prompt(item.message, {
 			images: item.images,
 			streamingBehavior: item.streamingBehavior,

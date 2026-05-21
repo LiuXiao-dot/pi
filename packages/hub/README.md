@@ -118,6 +118,76 @@ After connecting in the browser:
 
 Persistent provider URLs can also be configured in `~/.pi/agent/models.json` on the hub machine (see [coding-agent models.md](../coding-agent/docs/models.md)). API keys still come from `/login` or environment variables on the server running `pi-hub`, not from the web UI.
 
+## Model catalog (Web UI dropdowns)
+
+Configure in `.pi/hub.json`:
+
+```json
+{
+  "models": {
+    "catalog": [
+      "anthropic/claude-opus-4-7",
+      "openai/gpt-5.4"
+    ],
+    "session": "anthropic/claude-opus-4-7",
+    "roleModels": {
+      "pm": "anthropic/claude-sonnet-4-5",
+      "developer": "anthropic/claude-opus-4-7"
+    }
+  }
+}
+```
+
+| Field | Purpose |
+|-------|---------|
+| `catalog` | Models listed in all Web UI dropdowns (`provider/modelId`). Omit or `[]` to show every model from the registry that has auth. |
+| `session` | Default model for the shared room session (synthesis reply). Applied on hub start. |
+| `roleModels` | Default model per role subprocess; overridable in the Web UI under **Role models** (saved back to `hub.json`). |
+
+WebSocket: `get_models_config`, `set_role_model`, and existing `get_available_models` / `set_model` (catalog-filtered).
+
+## Multi-role orchestration
+
+Enable in `.pi/hub.json`:
+
+```json
+{
+  "roles": {
+    "enabled": true,
+    "rolesDir": ".pi/roles",
+    "pmRole": "pm",
+    "maxParallel": 4
+  }
+}
+```
+
+Copy example role definitions from [`roles.example/`](./roles.example/) into `<cwd>/.pi/roles/` (at minimum `pm.md` plus worker roles such as `developer.md`).
+
+Each role is a markdown file with YAML frontmatter:
+
+| Field | Purpose |
+|-------|---------|
+| `name` | Role id |
+| `description` | Shown to the PM for task assignment |
+| `model` | Passed to `pi --model` for subprocess runs |
+| `tools` | Comma-separated tool allowlist |
+| `skills` | Comma-separated skill names (resolved under `.pi/skills/` or `~/.pi/agent/skills/`) |
+| `rules` | Optional path to a rules file; otherwise the markdown body is used as system prompt append |
+
+User-level roles live in `~/.pi/agent/roles/`. Project roles in `.pi/roles/` override same name.
+
+When `roles.enabled` is true, each queued `prompt` is handled by:
+
+1. PM subprocess — outputs a single-line JSON plan (`tasks`, `uncovered`).
+2. Worker subprocesses per task (respecting `dependsOn`, up to `maxParallel`).
+3. Main hub session synthesis — one assistant reply for the room.
+
+Work that no role covers is broadcast as `role_gap` to all clients (not blocking execution).
+
+**Security:** `.pi/roles/` is repo-controlled, like project agents. Only enable on trusted repositories.
+
+**Cost:** One user message can spawn multiple `pi` subprocesses plus a synthesis turn.
+
 ## Protocol
 
 WebSocket path: `/ws`
@@ -128,3 +198,4 @@ WebSocket path: `/ws`
 4. Hub broadcasts `agent_event` for session activity.
 5. Blocking extension UI is routed to the client that owns the current queue turn.
 6. `get_available_models`, `set_model`, and `set_provider_base_url` manage the shared session model and proxy base URL; successful changes broadcast `state_update`.
+7. With roles enabled: `role_plan`, `role_progress`, and `role_gap` report orchestration state.

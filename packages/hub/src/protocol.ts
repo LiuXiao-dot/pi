@@ -70,7 +70,9 @@ export type HubClientMessage =
 	| { type: "abort"; id?: string }
 	| { type: "get_state"; id?: string }
 	| { type: "get_available_models"; id?: string }
+	| { type: "get_models_config"; id?: string }
 	| { type: "set_model"; id?: string; provider: string; modelId: string }
+	| { type: "set_role_model"; id?: string; roleName: string; provider?: string; modelId?: string }
 	| { type: "set_provider_base_url"; id?: string; provider: string; baseUrl: string }
 	| HubExtensionUIResponse;
 
@@ -124,6 +126,20 @@ export interface HubModelInfoPayload {
 	hasAuth: boolean;
 }
 
+export interface HubRoleModelEntryPayload {
+	name: string;
+	description: string;
+	modelRef?: string;
+	fileModelRef?: string;
+}
+
+export interface HubModelsConfigPayload {
+	models: HubModelInfoPayload[];
+	catalog: string[];
+	sessionModelRef?: string;
+	roles: HubRoleModelEntryPayload[];
+}
+
 export interface HubCommandResult {
 	type: "command_result";
 	command: string;
@@ -144,6 +160,47 @@ export interface HubError {
 	message: string;
 }
 
+// ============================================================================
+// Multi-role orchestration
+// ============================================================================
+
+export interface HubTaskPlanTask {
+	role: string;
+	task: string;
+	dependsOn?: string[];
+}
+
+export interface HubTaskPlanGap {
+	description: string;
+	reason: string;
+}
+
+export interface HubTaskPlan {
+	summary: string;
+	tasks: HubTaskPlanTask[];
+	uncovered: HubTaskPlanGap[];
+}
+
+export interface HubRolePlan {
+	type: "role_plan";
+	plan: HubTaskPlan;
+}
+
+export type HubRoleProgressPhase = "started" | "done" | "failed";
+
+export interface HubRoleProgress {
+	type: "role_progress";
+	role: string;
+	taskId: string;
+	phase: HubRoleProgressPhase;
+	preview?: string;
+}
+
+export interface HubRoleGap {
+	type: "role_gap";
+	uncovered: HubTaskPlanGap[];
+}
+
 export type HubExtensionUIOutbound = HubExtensionUIRequest & {
 	targetClientId: string | null;
 	waitingForDisplayName?: string;
@@ -157,4 +214,7 @@ export type HubServerMessage =
 	| HubCommandResult
 	| HubStateUpdate
 	| HubExtensionUIOutbound
+	| HubRolePlan
+	| HubRoleProgress
+	| HubRoleGap
 	| HubError;

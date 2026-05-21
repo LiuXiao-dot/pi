@@ -28,6 +28,8 @@ export async function startHubServer(options: HubServerOptions): Promise<HubServ
 		agentDir: options.agentDir,
 		sessionPath: options.sessionPath,
 		defaultRoomId: options.defaultRoomId,
+		modelsConfig: options.modelsConfig,
+		rolesConfig: options.rolesConfig,
 		createSession: options.createSession,
 	});
 

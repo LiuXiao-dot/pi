@@ -1,5 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { filterModelsByCatalog } from "./models-config.ts";
 
 /** Model metadata exposed to web clients (no secrets). */
 export interface HubModelInfo {
@@ -22,7 +23,8 @@ export function toHubModelInfo(model: Model<Api>, registry: ModelRegistry): HubM
 	};
 }
 
-export async function listHubModels(registry: ModelRegistry): Promise<HubModelInfo[]> {
+export async function listHubModels(registry: ModelRegistry, catalog: string[] = []): Promise<HubModelInfo[]> {
 	const models = await registry.getAvailable();
-	return models.map((m) => toHubModelInfo(m, registry));
+	const infos = models.map((m) => toHubModelInfo(m, registry));
+	return filterModelsByCatalog(infos, catalog);
 }

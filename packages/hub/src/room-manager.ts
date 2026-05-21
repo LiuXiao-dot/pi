@@ -8,6 +8,7 @@ import {
 	ModelRegistry,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import type { ResolvedHubModelsConfig, ResolvedHubRolesConfig } from "./config.ts";
 import { Room } from "./room.ts";
 
 export interface RoomManagerOptions {
@@ -15,6 +16,8 @@ export interface RoomManagerOptions {
 	agentDir?: string;
 	sessionPath?: string;
 	defaultRoomId?: string;
+	modelsConfig: ResolvedHubModelsConfig;
+	rolesConfig: ResolvedHubRolesConfig;
 	/** Test hook: override default createAgentSession */
 	createSession?: (cwd: string, agentDir: string) => Promise<CreateAgentSessionResult>;
 }
@@ -55,8 +58,15 @@ export class RoomManager {
 
 	private async createRoom(roomId: string): Promise<Room> {
 		const sessionResult = await this.createSession();
-		const room = new Room({ roomId, sessionResult });
+		const room = new Room({
+			roomId,
+			sessionResult,
+			cwd: resolve(this.options.cwd),
+			rolesConfig: this.options.rolesConfig,
+			modelsConfig: this.options.modelsConfig,
+		});
 		await room.start();
+		await room.applyConfiguredSessionModel();
 		return room;
 	}
 
