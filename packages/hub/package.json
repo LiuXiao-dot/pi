@@ -1,0 +1,60 @@
+{
+	"name": "@earendil-works/pi-hub",
+	"version": "0.75.3",
+	"description": "LAN WebSocket hub for collaborative pi coding-agent sessions",
+	"type": "module",
+	"bin": {
+		"pi-hub": "dist/cli.js"
+	},
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "node scripts/build.mjs",
+		"start": "node dist/cli.js",
+		"init": "node dist/cli.js init",
+		"test": "vitest --run",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"dependencies": {
+		"@earendil-works/pi-coding-agent": "^0.75.3",
+		"ws": "8.18.3"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-ai": "^0.75.3",
+		"@types/node": "22.19.19",
+		"@types/ws": "8.18.1",
+		"esbuild": "0.28.0",
+		"shx": "0.4.0",
+		"typescript": "5.9.3",
+		"vitest": "3.2.4"
+	},
+	"keywords": [
+		"pi",
+		"agent",
+		"websocket",
+		"collaboration",
+		"lan"
+	],
+	"author": "Mario Zechner",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/earendil-works/pi-mono.git",
+		"directory": "packages/hub"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	}
+}

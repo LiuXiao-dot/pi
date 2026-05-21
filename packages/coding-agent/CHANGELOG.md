@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `@earendil-works/pi-hub` and `@earendil-works/pi-web` packages for LAN multi-client Web UI collaboration via WebSocket hub (see `packages/hub/README.md`).
+
 ### Changed
 
 - Changed source syntax to avoid TypeScript constructs that require JavaScript emit, keeping core sources compatible with Node.js strip-only TypeScript checks.

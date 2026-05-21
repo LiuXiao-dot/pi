@@ -1,0 +1,23 @@
+{
+	"name": "@earendil-works/pi-web",
+	"version": "0.75.3",
+	"description": "Web client for pi LAN hub",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "node scripts/build.mjs",
+		"dev": "node scripts/build.mjs --watch"
+	},
+	"devDependencies": {
+		"esbuild": "0.28.0",
+		"shx": "0.4.0",
+		"typescript": "5.9.3"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/earendil-works/pi-mono.git",
+		"directory": "packages/web"
+	}
+}

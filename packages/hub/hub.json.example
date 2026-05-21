@@ -1,0 +1,7 @@
+{
+	"token": "replace-with-a-long-random-secret",
+	"port": 3141,
+	"host": "0.0.0.0",
+	"cwd": "E:\\path\\to\\your\\project",
+	"defaultRoomId": "default"
+}

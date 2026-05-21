@@ -53,6 +53,8 @@ I regularly publish my own `pi-mono` work sessions here:
 | **[@earendil-works/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
 | **[@earendil-works/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
 | **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
+| **[@earendil-works/pi-hub](packages/hub)** | LAN WebSocket hub for multi-client web UI (`npm run hub`) |
+| **[@earendil-works/pi-web](packages/web)** | Browser client for pi-hub |
 
 For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
 
@@ -68,6 +70,7 @@ npm run build        # Build all packages
 npm run check        # Lint, format, and type check
 ./test.sh            # Run tests (skips LLM-dependent tests without API keys)
 ./pi-test.sh         # Run pi from sources (can be run from any directory)
+npm run hub          # LAN web hub (builds on first run); see packages/hub/README.md
 ```
 
 ## License

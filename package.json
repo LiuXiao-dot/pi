@@ -11,7 +11,11 @@
 	],
 	"scripts": {
 		"clean": "npm run clean --workspaces",
-		"build": "cd packages/tui && npm run build && cd ../ai && npm run build && cd ../agent && npm run build && cd ../coding-agent && npm run build",
+		"build": "cd packages/tui && npm run build && cd ../ai && npm run build && cd ../agent && npm run build && cd ../coding-agent && npm run build && cd ../web && npm run build && cd ../hub && npm run build",
+		"build:web": "node packages/web/scripts/build.mjs",
+		"hub:build": "npm run build:web && npm run build --workspace=@earendil-works/pi-hub",
+		"hub": "node scripts/run-pi-hub.mjs",
+		"hub:init": "node scripts/run-pi-hub.mjs init",
 		"check": "biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && tsgo --noEmit && npm run check:browser-smoke",
 		"check:browser-smoke": "node scripts/check-browser-smoke.mjs",
 		"check:pinned-deps": "node scripts/check-pinned-deps.mjs",
