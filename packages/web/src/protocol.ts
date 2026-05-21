@@ -130,3 +130,10 @@ export interface HubRoleContentPayload {
 	filePath: string;
 	content: string;
 }
+
+/** Image attachment sent with prompts. */
+export interface HubImageContent {
+	type: "image";
+	data: string; // base64
+	mimeType: string;
+}

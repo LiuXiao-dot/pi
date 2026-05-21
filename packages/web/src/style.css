@@ -598,9 +598,10 @@ select {
   width: 100%;
   overflow: visible;
   position: relative;
-  transition: transform var(--duration-fast) var(--ease-out);
+  transition: transform var(--duration-normal) var(--ease-out);
   touch-action: pan-y;
   user-select: none;
+  cursor: default;
 }
 
 .room-swipe-delete {
@@ -608,23 +609,29 @@ select {
   right: 0;
   top: 0;
   bottom: 0;
-  width: 60px;
+  width: 80px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--error);
   color: #ffffff;
   border: none;
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
   cursor: pointer;
   font: inherit;
-  font-size: 0.7rem;
+  font-size: 0.85rem;
   font-weight: 500;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.02em;
   opacity: 0;
-  transition: opacity var(--duration-fast) ease;
+  transition: opacity var(--duration-fast) ease, background var(--duration-fast) ease;
   pointer-events: none;
+  user-select: none;
   z-index: 1;
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.12);
+}
+
+.room-swipe-delete:hover {
+  background: #d63031;
 }
 
 .room-swipe-delete:active {
@@ -636,6 +643,13 @@ select {
   z-index: 2;
   width: 100%;
   flex: 1;
+  background: var(--surface-raised);
+  transition: box-shadow var(--duration-fast) ease;
+}
+
+/* Animate the row background when swiped open */
+.room-swipe-wrap.is-swiped .room-row {
+  box-shadow: -2px 0 0 var(--error-border);
 }
 
 /* === Room List === */
@@ -1300,14 +1314,56 @@ select {
    ================================= */
 
 .composer {
-  display: flex;
-  gap: 0.65rem;
-  align-items: flex-end;
-  padding: 0.9rem 1.25rem 1.1rem;
+  padding: 0.5rem 1.25rem 0.9rem;
   border-top: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.78);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
+}
+
+.composer-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.composer-input-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.composer-attach-btn {
+  flex-shrink: 0;
+  width: 2.25rem;
+  height: 2.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-raised);
+  color: var(--muted);
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  cursor: pointer;
+  font: inherit;
+  font-size: 1.1rem;
+  font-weight: 300;
+  line-height: 1;
+  transition:
+    border-color var(--duration-fast),
+    color var(--duration-fast),
+    background var(--duration-fast);
+  user-select: none;
+}
+
+.composer-attach-btn:hover {
+  border-color: var(--accent-100);
+  color: var(--accent);
+  background: var(--accent-50);
+}
+
+.composer-attach-btn:active {
+  transform: scale(0.95);
 }
 
 .composer textarea {
@@ -1356,6 +1412,60 @@ select {
   cursor: default;
   transform: none;
   box-shadow: none;
+}
+
+/* === Attachment Chips === */
+
+.composer-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0 0.15rem;
+}
+
+.composer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.4rem 0.2rem 0.55rem;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font-size: 0.78rem;
+  color: var(--text-body);
+  line-height: 1.4;
+  animation: fade-up var(--duration-fast) var(--ease-out) both;
+}
+
+.composer-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+
+.composer-chip-remove {
+  flex-shrink: 0;
+  width: 1.1rem;
+  height: 1.1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  border-radius: 50%;
+  transition:
+    background var(--duration-fast),
+    color var(--duration-fast);
+}
+
+.composer-chip-remove:hover {
+  background: var(--surface);
+  color: var(--error);
 }
 
 /* =================================

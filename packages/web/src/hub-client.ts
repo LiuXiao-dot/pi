@@ -425,8 +425,12 @@ export class HubClient {
 		return data.models ?? [];
 	}
 
-	prompt(message: string): void {
-		this.send({ type: "prompt", message });
+	prompt(message: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): void {
+		const payload: Record<string, unknown> = { type: "prompt", message };
+		if (images && images.length > 0) {
+			payload.images = images;
+		}
+		this.send(payload);
 	}
 
 	extensionUiResponse(response: HubClientMessage): void {

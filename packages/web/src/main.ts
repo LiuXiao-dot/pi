@@ -284,11 +284,18 @@ function renderWorkspace(
 	// Reset all open swipes when clicking/tapping the rail background
 	roomRail.addEventListener("click", (ev) => {
 		const target = ev.target as HTMLElement;
-		if (!target.closest(".room-swipe-wrap")) {
+		if (!target.closest(".room-swipe-wrap") && !target.closest(".room-swipe-delete")) {
 			for (const wrap of roomList.querySelectorAll(".room-swipe-wrap")) {
 				(wrap as HTMLElement).style.transform = "translateX(0)";
-				const da = wrap.querySelector(".room-swipe-delete") as HTMLElement | null;
-				if (da) da.style.opacity = "0";
+				wrap.classList.remove("is-swiped");
+				const li = wrap.parentElement;
+				if (li) {
+					const da = li.querySelector(".room-swipe-delete") as HTMLElement | null;
+					if (da) {
+						da.style.opacity = "0";
+						da.style.pointerEvents = "none";
+					}
+				}
 			}
 		}
 	});
@@ -348,9 +355,9 @@ function renderWorkspace(
 			row.append(main, meta);
 
 			// Delete action (hidden behind the row, revealed on swipe left)
-			const deleteAction = el("button", "room-swipe-delete danger-btn");
+			const deleteAction = el("button", "room-swipe-delete");
 			deleteAction.type = "button";
-			deleteAction.textContent = "Delete";
+			deleteAction.textContent = "🗑 Delete";
 
 			const roomId = r.roomId;
 			deleteAction.onclick = () => {
@@ -369,83 +376,95 @@ function renderWorkspace(
 				})();
 			};
 
-			// Touch swipe logic
+			// Swipe drag state (shared per-row via closure, but mousemove/up are delegated)
 			let startX = 0;
 			let currentX = 0;
 			let isDragging = false;
-			const SWIPE_THRESHOLD = 60;
+			const SWIPE_THRESHOLD = 80;
 
 			function updateSwipe(dx: number): void {
 				if (dx <= 0) {
-					// Swiping left — reveal delete behind
 					swipeWrap.style.transform = `translateX(${Math.max(dx, -SWIPE_THRESHOLD)}px)`;
 					deleteAction.style.opacity = String(Math.min(1, Math.abs(dx) / SWIPE_THRESHOLD));
+					swipeWrap.classList.remove("is-swiped");
 				} else {
-					// Swiping right — reset
 					swipeWrap.style.transform = "translateX(0)";
 					deleteAction.style.opacity = "0";
+					swipeWrap.classList.remove("is-swiped");
 				}
 			}
 
 			function commitSwipe(dx: number): void {
 				if (dx < -SWIPE_THRESHOLD / 2) {
-					// Open delete
 					swipeWrap.style.transform = `translateX(-${SWIPE_THRESHOLD}px)`;
 					deleteAction.style.opacity = "1";
+					deleteAction.style.pointerEvents = "auto";
+					swipeWrap.classList.add("is-swiped");
 				} else {
-					// Reset
 					swipeWrap.style.transform = "translateX(0)";
 					deleteAction.style.opacity = "0";
+					deleteAction.style.pointerEvents = "none";
+					swipeWrap.classList.remove("is-swiped");
 				}
 			}
 
-			swipeWrap.addEventListener(
-				"touchstart",
-				(e) => {
-					startX = e.touches[0]!.clientX;
-					isDragging = true;
-				},
-				{ passive: true },
-			);
+			// Use pointer events — they fire for both touch and mouse.
+			// pointermove/up are on document so dragging works even outside the element.
+			function onPointerDown(e: PointerEvent): void {
+				startX = e.clientX;
+				currentX = startX;
+				isDragging = true;
+				swipeWrap.setPointerCapture(e.pointerId);
+			}
 
-			swipeWrap.addEventListener(
-				"touchmove",
-				(e) => {
-					if (!isDragging) return;
-					currentX = e.touches[0]!.clientX;
-					const dx = currentX - startX;
-					updateSwipe(dx);
-				},
-				{ passive: true },
-			);
+			function onPointerMove(e: PointerEvent): void {
+				if (!isDragging) return;
+				currentX = e.clientX;
+				const dx = currentX - startX;
+				updateSwipe(dx);
+			}
 
-			swipeWrap.addEventListener(
-				"touchend",
-				() => {
-					if (!isDragging) return;
-					isDragging = false;
-					const dx = currentX - startX;
-					commitSwipe(dx);
-					startX = 0;
-					currentX = 0;
-				},
-				{ passive: true },
-			);
+			function onPointerUp(e: PointerEvent): void {
+				if (!isDragging) return;
+				isDragging = false;
+				const dx = currentX - startX;
+				commitSwipe(dx);
+				startX = 0;
+				currentX = 0;
+				try {
+					swipeWrap.releasePointerCapture(e.pointerId);
+				} catch {
+					/* ignore */
+				}
+			}
+
+			swipeWrap.addEventListener("pointerdown", onPointerDown);
+			swipeWrap.addEventListener("pointermove", onPointerMove);
+			swipeWrap.addEventListener("pointerup", onPointerUp);
+			swipeWrap.addEventListener("pointercancel", onPointerUp);
 
 			// Click on row still selects the room; close any open swipe first
 			row.onclick = () => {
 				// Reset any open swipe
 				swipeWrap.style.transform = "translateX(0)";
+				swipeWrap.classList.remove("is-swiped");
 				deleteAction.style.opacity = "0";
+				deleteAction.style.pointerEvents = "none";
 				closeRoomRail();
 				void selectRoom(roomId);
 			};
 
-			// Clicking anywhere else on the rail resets all swipes
-			// (handled via a single listener below)
+			// Delete action sits behind swipeWrap, revealed when swipeWrap slides left
+			li.style.position = "relative";
+			li.style.overflow = "hidden";
+			deleteAction.style.position = "absolute";
+			deleteAction.style.right = "0";
+			deleteAction.style.top = "0";
+			deleteAction.style.bottom = "0";
+			deleteAction.style.pointerEvents = "none";
 
-			swipeWrap.append(row, deleteAction);
-			li.appendChild(swipeWrap);
+			swipeWrap.appendChild(row);
+			li.append(deleteAction, swipeWrap);
 			roomList.appendChild(li);
 		}
 	}
@@ -582,13 +601,138 @@ function renderWorkspace(
 	queueBar.textContent = "Queue empty";
 	panel.appendChild(queueBar);
 
+	// Attachment state
+	const attachedFiles: Array<{ name: string; data: string; mimeType: string; isImage: boolean }> = [];
+
 	const composer = el("div", "composer");
+
+	const attachContainer = el("div", "composer-inner");
+
+	const chipsRow = el("div", "composer-chips");
+
+	const inputRow = el("div", "composer-input-row");
+
+	const fileInput = el("input") as HTMLInputElement;
+	fileInput.type = "file";
+	fileInput.multiple = true;
+	fileInput.accept = "image/*,.pdf,.txt,.md,.json,.js,.ts,.py,.html,.css,.csv,.xml,.yaml,.yml,.log,.env";
+	fileInput.style.display = "none";
+
+	const attachBtn = el("button", "composer-attach-btn");
+	attachBtn.type = "button";
+	attachBtn.setAttribute("aria-label", "Attach file");
+	attachBtn.textContent = "+";
+	attachBtn.onclick = () => fileInput.click();
+
 	const input = el("textarea") as HTMLTextAreaElement;
 	input.placeholder = "Message…";
+
 	const sendBtn = el("button", "btn-send");
 	sendBtn.textContent = "Send";
-	composer.append(input, sendBtn);
+
+	inputRow.append(attachBtn, input, sendBtn);
+	composer.append(attachContainer);
+	attachContainer.append(chipsRow, inputRow);
 	panel.appendChild(composer);
+	panel.appendChild(fileInput);
+
+	function renderChips(): void {
+		chipsRow.innerHTML = "";
+		for (let i = 0; i < attachedFiles.length; i++) {
+			const f = attachedFiles[i]!;
+			const chip = el("span", "composer-chip");
+			const label = el("span", "composer-chip-label");
+			label.textContent = f.isImage ? "🖼 " : "📄 ";
+			label.append(document.createTextNode(f.name));
+			const removeBtn = el("button", "composer-chip-remove");
+			removeBtn.type = "button";
+			removeBtn.textContent = "×";
+			removeBtn.onclick = () => {
+				attachedFiles.splice(i, 1);
+				renderChips();
+			};
+			chip.append(label, removeBtn);
+			chipsRow.appendChild(chip);
+		}
+	}
+
+	fileInput.addEventListener("change", () => {
+		const files = fileInput.files;
+		if (!files) return;
+		for (let i = 0; i < files.length; i++) {
+			const file = files[i]!;
+			const isImage = file.type.startsWith("image/");
+			if (isImage) {
+				// Read as base64 data URL
+				const reader = new FileReader();
+				reader.onload = () => {
+					const result = reader.result as string;
+					// data:image/png;base64,...
+					const comma = result.indexOf(",");
+					const data = comma >= 0 ? result.slice(comma + 1) : result;
+					attachedFiles.push({
+						name: file.name,
+						data,
+						mimeType: file.type,
+						isImage: true,
+					});
+					renderChips();
+				};
+				reader.readAsDataURL(file);
+			} else {
+				// Read as text to embed in message
+				const reader = new FileReader();
+				reader.onload = () => {
+					const text = reader.result as string;
+					attachedFiles.push({
+						name: file.name,
+						data: text,
+						mimeType: file.type || "text/plain",
+						isImage: false,
+					});
+					renderChips();
+				};
+				reader.readAsText(file);
+			}
+		}
+		// Reset so selecting the same file again triggers change
+		fileInput.value = "";
+	});
+
+	// Paste handler for images (screenshots from clipboard)
+	input.addEventListener("paste", (e: ClipboardEvent) => {
+		const items = e.clipboardData?.items;
+		if (!items) return;
+		let hasImage = false;
+		for (let i = 0; i < items.length; i++) {
+			const item = items[i]!;
+			if (item.type.startsWith("image/")) {
+				hasImage = true;
+				const file = item.getAsFile();
+				if (!file) continue;
+				// Rename with appropriate extension
+				const ext = item.type.split("/")[1] ?? "png";
+				const name = `pasted-image-${Date.now()}.${ext}`;
+				const reader = new FileReader();
+				reader.onload = () => {
+					const result = reader.result as string;
+					const comma = result.indexOf(",");
+					const data = comma >= 0 ? result.slice(comma + 1) : result;
+					attachedFiles.push({
+						name,
+						data,
+						mimeType: item.type,
+						isImage: true,
+					});
+					renderChips();
+				};
+				reader.readAsDataURL(file);
+			}
+		}
+		if (hasImage) {
+			e.preventDefault();
+		}
+	});
 
 	// Room config modal elements (created once, reused)
 	const roomSkillsInput = el("input") as HTMLInputElement;
@@ -797,11 +941,30 @@ function renderWorkspace(
 		title.textContent = "Role library";
 		modal.appendChild(title);
 
+		// Select existing role + New button
+		const nameRow = el("div", "sidebar-row");
 		const select = el("select") as HTMLSelectElement;
+		const newBtn = el("button", "secondary-btn");
+		newBtn.type = "button";
+		newBtn.textContent = "New";
+		nameRow.append(select, newBtn);
+		modal.appendChild(nameRow);
+
+		// New role name input (shown when New is clicked)
+		const newNameInput = el("input") as HTMLInputElement;
+		newNameInput.placeholder = "role-name (press Enter to create)";
+		newNameInput.style.display = "none";
+		const newNameRow = el("div", "sidebar-row");
+		newNameRow.appendChild(newNameInput);
+		modal.appendChild(newNameRow);
+
+		const meta = el("div", "role-meta");
+		modal.appendChild(meta);
+
 		const editor = el("textarea", "role-editor") as HTMLTextAreaElement;
 		editor.rows = 12;
 		editor.spellcheck = false;
-		const meta = el("div", "role-meta");
+		modal.appendChild(editor);
 
 		async function loadRole(name: string): Promise<void> {
 			const role = await client.getRole(name);
@@ -828,11 +991,36 @@ function renderWorkspace(
 			}
 		}
 
-		modal.appendChild(select);
-		modal.appendChild(meta);
-		modal.appendChild(editor);
+		newBtn.onclick = () => {
+			newNameInput.style.display = "";
+			newNameInput.value = "";
+			newNameInput.focus();
+			editor.value = `---\nname: \ndescription: \nwho: \ncan: \nwhen: \nmodel: \ntools: \n---\n\n`;
+			meta.textContent = "Enter a name above and press Enter to create the role.";
+			select.value = "";
+		};
+
+		newNameInput.addEventListener("keydown", (e) => {
+			if (e.key !== "Enter") return;
+			e.preventDefault();
+			const name = newNameInput.value.trim();
+			if (!name) return;
+			void (async () => {
+				try {
+					await client.saveRole(name, editor.value);
+					await refreshSelect();
+					select.value = name;
+					await loadRole(name);
+					newNameInput.style.display = "none";
+					newNameInput.value = "";
+				} catch (e) {
+					showError(e instanceof Error ? e.message : String(e));
+				}
+			})();
+		});
 
 		select.addEventListener("change", () => {
+			newNameInput.style.display = "none";
 			void loadRole(select.value).catch((e) => showError(e instanceof Error ? e.message : String(e)));
 		});
 
@@ -841,9 +1029,11 @@ function renderWorkspace(
 		const saveBtn = el("button", "primary-btn");
 		saveBtn.textContent = "Save";
 		saveBtn.onclick = () => {
+			const name = select.value;
+			if (!name) return;
 			void (async () => {
 				try {
-					await client.saveRole(select.value, editor.value);
+					await client.saveRole(name, editor.value);
 					await refreshSelect();
 				} catch (e) {
 					showError(e instanceof Error ? e.message : String(e));
@@ -854,10 +1044,12 @@ function renderWorkspace(
 		const deleteBtn = el("button", "secondary-btn danger-btn");
 		deleteBtn.textContent = "Delete";
 		deleteBtn.onclick = () => {
-			if (!confirm(`Delete role "${select.value}"?`)) return;
+			const name = select.value;
+			if (!name) return;
+			if (!confirm(`Delete role "${name}"?`)) return;
 			void (async () => {
 				try {
-					await client.deleteRole(select.value);
+					await client.deleteRole(name);
 					await refreshSelect();
 				} catch (e) {
 					showError(e instanceof Error ? e.message : String(e));
@@ -1542,8 +1734,25 @@ function renderWorkspace(
 		const text = input.value.trim();
 		if (!text || !selectedRoomId || !client.isJoined()) return;
 		input.value = "";
-		appendMessage("user", text, session.displayName);
-		client.prompt(text);
+
+		// Build display text with file references
+		let displayText = text;
+		const images: Array<{ type: "image"; data: string; mimeType: string }> = [];
+
+		for (const f of attachedFiles) {
+			if (f.isImage) {
+				images.push({ type: "image", data: f.data, mimeType: f.mimeType });
+				displayText += `\n[Image: ${f.name}]`;
+			} else {
+				displayText += `\n\n--- ${f.name} ---\n${f.data}`;
+			}
+		}
+
+		attachedFiles.length = 0;
+		renderChips();
+
+		appendMessage("user", displayText, session.displayName);
+		client.prompt(text, images.length > 0 ? images : undefined);
 	};
 
 	input.addEventListener("keydown", (e) => {
