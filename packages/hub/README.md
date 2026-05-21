@@ -168,7 +168,10 @@ Each role is a markdown file with YAML frontmatter:
 | Field | Purpose |
 |-------|---------|
 | `name` | Role id |
-| `description` | Shown to the PM for task assignment |
+| `description` | Short summary (required) |
+| `who` | Who this role is (optional; shown in the room roster for PM assignment) |
+| `can` | What this role can do (optional) |
+| `when` | When the PM should assign work to this role (optional) |
 | `model` | Passed to `pi --model` for subprocess runs |
 | `tools` | Comma-separated tool allowlist |
 | `skills` | Comma-separated skill names (resolved under `.pi/skills/` or `~/.pi/agent/skills/`) |
@@ -178,7 +181,7 @@ User-level roles live in `~/.pi/agent/roles/`. Project roles in `.pi/roles/` ove
 
 When `roles.enabled` is true, each queued `prompt` is handled by:
 
-1. PM subprocess — outputs a single-line JSON plan (`tasks`, `uncovered`).
+1. PM subprocess — plans using only the **room-assigned worker roster** (Who / Can do / When); does not see the global role library. Outputs a single-line JSON plan (`tasks`, `uncovered`).
 2. Worker subprocesses per task (respecting `dependsOn`, up to `maxParallel`).
 3. Main hub session synthesis — one assistant reply for the room.
 
@@ -188,14 +191,32 @@ Work that no role covers is broadcast as `role_gap` to all clients (not blocking
 
 **Cost:** One user message can spawn multiple `pi` subprocesses plus a synthesis turn.
 
+## Rooms
+
+Rooms are stored under `<cwd>/.pi/hub/rooms.json` and `<cwd>/.pi/hub/rooms/<roomId>/` (session JSONL + `config.json`).
+
+- Create a room with `create_room` before the first `join` (hub startup auto-creates `defaultRoomId` when the registry is empty).
+- `delete_room` removes the registry entry and deletes the room directory by default (session data is not recoverable).
+- Each room has its own persisted session file; restarting pi-hub and re-joining the same `roomId` restores conversation history.
+
+Per-room `config.json` fields: `roleNames` (assigned roles from the global library, unique), `skills`, `rules`, `roleOverrides` (only for assigned roles), `rolesEnabled` (overrides global `roles.enabled` when set). Orchestration uses only `roleNames`; PM must be in that list plus at least one worker.
+
+Hub-scoped commands (require `token`, no join): `list_rooms`, `create_room`, `delete_room`, `get_room_config`, `set_room_config`, `add_room_role`, `remove_room_role`, `set_room_roles`, `list_roles`, `get_role`, `save_role`, `delete_role`.
+
+The Web UI includes room list/create/delete, room config, and role markdown editing.
+
 ## Protocol
 
 WebSocket path: `/ws`
 
-1. Client sends `join` with `roomId`, `token`, `displayName`.
+**Hub-scoped (token only):** `list_rooms`, `create_room`, `delete_room`, `get_room_config`, `set_room_config`, `add_room_role`, `remove_room_role`, `set_room_roles`, `list_roles`, `get_role`, `save_role`, `delete_role`.
+
+**After `join`:**
+
+1. Client sends `join` with `roomId`, `token`, `displayName` (room must exist in the registry).
 2. Hub replies with `joined` and broadcasts `presence`.
 3. Clients send `prompt`, `steer`, or `follow_up`. Hub enqueues and runs one at a time.
 4. Hub broadcasts `agent_event` (with `hostDisplayName` for the current queue turn) and `activity_update` (`idle`, `replying`, `thinking`, `tool`, `compacting`) for session activity.
 5. Blocking extension UI is routed to the client that owns the current queue turn.
 6. `get_available_models`, `set_model`, and `set_provider_base_url` manage the shared session model and proxy base URL; successful changes broadcast `state_update`.
-7. With roles enabled: `role_plan`, `role_progress`, and `role_gap` report orchestration state.
+7. With roles enabled: `role_plan`, `role_progress`, and `role_gap` report orchestration state; role turns are also persisted as `hub_role_plan` / `hub_role_output` custom messages in the room session.

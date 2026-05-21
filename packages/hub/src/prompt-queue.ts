@@ -20,6 +20,9 @@ export type QueueUpdateListener = (update: HubQueueUpdate) => void;
 
 export interface PromptQueueOptions {
 	roleOrchestrator?: RoleOrchestrator;
+	getAbortSignal?: () => AbortSignal | undefined;
+	onTurnStart?: () => void;
+	onTurnEnd?: () => void;
 }
 
 export class PromptQueue {
@@ -31,11 +34,17 @@ export class PromptQueue {
 	private readonly session: AgentSession;
 	private readonly onUpdate: QueueUpdateListener;
 	private readonly roleOrchestrator: RoleOrchestrator | undefined;
+	private readonly getAbortSignal: (() => AbortSignal | undefined) | undefined;
+	private readonly onTurnStart: (() => void) | undefined;
+	private readonly onTurnEnd: (() => void) | undefined;
 
 	constructor(session: AgentSession, onUpdate: QueueUpdateListener, options?: PromptQueueOptions) {
 		this.session = session;
 		this.onUpdate = onUpdate;
 		this.roleOrchestrator = options?.roleOrchestrator;
+		this.getAbortSignal = options?.getAbortSignal;
+		this.onTurnStart = options?.onTurnStart;
+		this.onTurnEnd = options?.onTurnEnd;
 	}
 
 	getTurnOriginClientId(): string | null {
@@ -112,6 +121,7 @@ export class PromptQueue {
 				const item = this.items.shift()!;
 				this.current = item;
 				this.turnOriginClientId = item.clientId;
+				this.onTurnStart?.();
 				this.emitUpdate();
 
 				try {
@@ -124,12 +134,12 @@ export class PromptQueue {
 					}
 					await this.waitUntilIdle();
 				} catch (err) {
-					// Continue queue after failure
 					const message = err instanceof Error ? err.message : String(err);
 					console.error(`[pi-hub] queue item failed: ${message}`);
 				} finally {
 					this.current = null;
 					this.turnOriginClientId = null;
+					this.onTurnEnd?.();
 					this.emitUpdate();
 				}
 			}
@@ -140,8 +150,9 @@ export class PromptQueue {
 
 	private async runPrompt(item: QueueItem): Promise<void> {
 		const orchestrator = this.roleOrchestrator;
+		const signal = this.getAbortSignal?.();
 		if (orchestrator?.isReady()) {
-			await orchestrator.run(item.message);
+			await orchestrator.run(item.message, signal);
 			return;
 		}
 

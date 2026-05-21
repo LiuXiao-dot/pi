@@ -1,24 +1,36 @@
 import type { createServer, IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { type WebSocket, WebSocketServer } from "ws";
-import type { HubClientMessage } from "./protocol.ts";
+import type { ResolvedHubRolesConfig } from "./config.ts";
+import { HubAdmin } from "./hub-admin.ts";
+import { type HubClientMessage, isHubScopedMessage } from "./protocol.ts";
 import type { Room } from "./room.ts";
 import type { RoomManager } from "./room-manager.ts";
+import { RoomRegistryError } from "./room-registry.ts";
 
 export interface WsHubOptions {
 	token: string;
 	roomManager: RoomManager;
 	defaultRoomId: string;
+	rolesConfig: ResolvedHubRolesConfig;
+	cwd: string;
 }
 
 export class WsHub {
 	private readonly wss: WebSocketServer;
 	private readonly server: ReturnType<typeof createServer>;
 	private readonly options: WsHubOptions;
+	private readonly admin: HubAdmin;
 
 	constructor(server: ReturnType<typeof createServer>, options: WsHubOptions) {
 		this.server = server;
 		this.options = options;
+		this.admin = new HubAdmin({
+			token: options.token,
+			roomManager: options.roomManager,
+			rolesConfig: options.rolesConfig,
+			cwd: options.cwd,
+		});
 		this.wss = new WebSocketServer({ noServer: true });
 
 		this.server.on("upgrade", (request, socket, head) => {
@@ -57,6 +69,11 @@ export class WsHub {
 			parsed = JSON.parse(text) as HubClientMessage;
 		} catch {
 			this.send(ws, { type: "error", code: "invalid_json", message: "Invalid JSON message" });
+			return;
+		}
+
+		if (isHubScopedMessage(parsed)) {
+			await this.admin.handle(ws, parsed);
 			return;
 		}
 
@@ -118,12 +135,13 @@ export class WsHub {
 				room.removeClient(client.id);
 			});
 		} catch (err) {
+			const code = err instanceof RoomRegistryError ? err.code : "join_failed";
 			const messageText = err instanceof Error ? err.message : String(err);
 			console.error(`[pi-hub] Join failed:`, err);
 			this.send(ws, {
 				type: "error",
-				code: "join_failed",
-				message: `Failed to start session: ${messageText}`,
+				code,
+				message: messageText,
 			});
 			ws.close(1011, "join failed");
 		}

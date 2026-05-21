@@ -27,6 +27,7 @@ import type {
 } from "./protocol.ts";
 import { RoleOrchestrator } from "./role-orchestrator.ts";
 import { discoverRoles } from "./roles/discovery.ts";
+import type { RoomConfigFile, RoomRegistry } from "./room-registry.ts";
 import { safeStringify } from "./safe-json.ts";
 import { buildSessionState } from "./state-snapshot.ts";
 
@@ -42,6 +43,8 @@ export interface RoomOptions {
 	cwd: string;
 	rolesConfig: ResolvedHubRolesConfig;
 	modelsConfig: ResolvedHubModelsConfig;
+	roomConfig: RoomConfigFile;
+	registry: RoomRegistry;
 }
 
 export class Room {
@@ -50,7 +53,10 @@ export class Room {
 	readonly cwd: string;
 	readonly modelsConfig: ResolvedHubModelsConfig;
 	private readonly rolesConfig: ResolvedHubRolesConfig;
+	private readonly registry: RoomRegistry;
+	private roomConfig: RoomConfigFile;
 	private roleModelOverrides: Record<string, string>;
+	private queueAbortController: AbortController | null = null;
 	private readonly clients = new Map<string, RoomClient>();
 	private unsubscribeSession: (() => void) | undefined;
 	private readonly extensionUi: ExtensionUiRouter;
@@ -65,18 +71,18 @@ export class Room {
 		this.cwd = options.cwd;
 		this.modelsConfig = options.modelsConfig;
 		this.rolesConfig = options.rolesConfig;
+		this.registry = options.registry;
+		this.roomConfig = options.roomConfig;
 		this.roleModelOverrides = { ...options.modelsConfig.roleModels };
 
-		this.extensionUi = new ExtensionUiRouter(
-			(request, targetClientId) => this.broadcastExtensionUi(request, targetClientId),
-			() => this.queue.getTurnOriginClientId(),
-		);
-
-		const roleOrchestrator = options.rolesConfig.enabled
+		const roleOrchestrator = this.isRolesEnabledForRoom()
 			? new RoleOrchestrator({
 					session: this.session,
 					cwd: options.cwd,
+					roomId: options.roomId,
+					registry: options.registry,
 					rolesConfig: options.rolesConfig,
+					getRoomConfig: () => this.roomConfig,
 					getRoleModelOverrides: () => this.roleModelOverrides,
 					onBroadcast: (msg) => this.broadcastRoleEvent(msg),
 				})
@@ -88,8 +94,36 @@ export class Room {
 				this.broadcast(update);
 				this.syncActivityFromQueue();
 			},
-			{ roleOrchestrator },
+			{
+				roleOrchestrator,
+				getAbortSignal: () => this.queueAbortController?.signal,
+				onTurnStart: () => {
+					this.queueAbortController = new AbortController();
+				},
+				onTurnEnd: () => {
+					this.queueAbortController = null;
+				},
+			},
 		);
+
+		this.extensionUi = new ExtensionUiRouter(
+			(request, targetClientId) => this.broadcastExtensionUi(request, targetClientId),
+			() => this.queue.getTurnOriginClientId(),
+		);
+	}
+
+	isRolesEnabledForRoom(): boolean {
+		if (this.roomConfig.rolesEnabled === true) {
+			return true;
+		}
+		if (this.roomConfig.rolesEnabled === false) {
+			return false;
+		}
+		return this.rolesConfig.enabled;
+	}
+
+	reloadRoomConfig(config: RoomConfigFile): void {
+		this.roomConfig = config;
 	}
 
 	private broadcastRoleEvent(message: HubRolePlan | HubRoleGap | HubRoleProgress): void {
@@ -242,6 +276,7 @@ export class Room {
 
 			case "abort": {
 				try {
+					this.queueAbortController?.abort();
 					await this.session.abort();
 					this.sendCommandResult(client, "abort", message.id, true);
 				} catch (err) {
@@ -504,6 +539,10 @@ export class Room {
 			),
 		};
 		this.broadcast(update);
+	}
+
+	broadcastRoomDeleted(): void {
+		this.broadcast({ type: "room_deleted", roomId: this.roomId });
 	}
 
 	broadcast(message: HubServerMessage | HubQueueUpdate | HubRolePlan | HubRoleGap | HubRoleProgress): void {

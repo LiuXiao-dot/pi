@@ -2,8 +2,10 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ResolvedHubRolesConfig } from "./config.ts";
 import { applyRoleModelOverrides } from "./models-config.ts";
-import { discoverRoles, formatRoleCatalog, getRoleByName } from "./roles/discovery.ts";
+import { discoverRoles, formatRoomRosterForPm, getRoleByName } from "./roles/discovery.ts";
 import { parseTaskPlan } from "./roles/parse-plan.ts";
+import { type ResolvedRoleConfig, resolveRoleForRoom } from "./roles/resolve-config.ts";
+import { buildRoomContextPrefix } from "./roles/room-context.ts";
 import { runRoleSubprocess } from "./roles/runner.ts";
 import { planExecutionBatches } from "./roles/topo.ts";
 import type {
@@ -14,18 +16,20 @@ import type {
 	TaskPlan,
 	TaskPlanGap,
 } from "./roles/types.ts";
+import type { RoomConfigFile, RoomRegistry } from "./room-registry.ts";
 
 export type RoleOrchestratorBroadcast = (message: RolePlanEvent | RoleGapEvent | RoleProgressEvent) => void;
 
 export interface RoleOrchestratorOptions {
 	session: AgentSession;
 	cwd: string;
+	roomId: string;
+	registry: RoomRegistry;
 	rolesConfig: ResolvedHubRolesConfig;
+	getRoomConfig: () => RoomConfigFile;
 	onBroadcast: RoleOrchestratorBroadcast;
 	agentDir?: string;
-	/** Hub.json + runtime overrides for role subprocess models. */
 	getRoleModelOverrides: () => Record<string, string>;
-	/** Test hook: replace subprocess runner. */
 	runRole?: typeof runRoleSubprocess;
 }
 
@@ -53,8 +57,25 @@ async function mapWithConcurrencyLimit<TIn, TOut>(
 	return results;
 }
 
-function buildPmPrompt(userMessage: string, catalog: string): string {
-	return `User request:\n${userMessage}\n\nAvailable roles (do not assign work outside these roles):\n${catalog}\n\nRespond with a single JSON object only (no markdown), matching this schema:\n{"summary":"...","tasks":[{"role":"roleName","task":"...","dependsOn":["otherRole"]}],"uncovered":[{"description":"...","reason":"..."}]}\n\nPut work that no role can handle in uncovered. Use dependsOn only when a task needs another role's output first.`;
+function buildPmPrompt(userMessage: string, roomRoster: string, pmRoleName: string): string {
+	return `You are the coordinator role "${pmRoleName}" for this room only.
+
+You do NOT have access to a global role library. The roster below is the complete list of worker roles currently assigned to THIS room. Assign tasks only to those role names using each entry's Who / Can do / When to decide fit.
+
+User request:
+${userMessage}
+
+Room worker roster (assign tasks only to these roles):
+${roomRoster}
+
+Respond with a single JSON object only (no markdown fences), matching this schema:
+{"summary":"...","tasks":[{"role":"roleName","task":"...","dependsOn":["otherRole"]}],"uncovered":[{"description":"...","reason":"..."}]}
+
+Rules:
+- Only assign to role names listed in the room roster above (not "${pmRoleName}" unless you are also listed as a worker).
+- Match tasks to each role's Can do and When to assign; do not assign work a role cannot or should not handle.
+- Put work no roster role can handle in uncovered with a clear reason.
+- Use dependsOn only when a task needs another role's output first.`;
 }
 
 function buildSynthesisPrompt(userMessage: string, plan: TaskPlan, results: RoleTaskResult[]): string {
@@ -65,10 +86,18 @@ function buildSynthesisPrompt(userMessage: string, plan: TaskPlan, results: Role
 	return `[Orchestrated multi-role run — respond to the user in one cohesive assistant message.]\n\nOriginal user request:\n${userMessage}\n\nPM summary: ${plan.summary}\n\nRole outputs:\n\n${sections.join("\n\n---\n\n")}`;
 }
 
+function combineContextPrefix(...parts: (string | undefined)[]): string | undefined {
+	const merged = parts.filter((p) => p && p.trim().length > 0) as string[];
+	return merged.length > 0 ? merged.join("\n\n") : undefined;
+}
+
 export class RoleOrchestrator {
 	private readonly session: AgentSession;
 	private readonly cwd: string;
+	private readonly roomId: string;
+	private readonly registry: RoomRegistry;
 	private readonly rolesConfig: ResolvedHubRolesConfig;
+	private readonly getRoomConfig: () => RoomConfigFile;
 	private readonly onBroadcast: RoleOrchestratorBroadcast;
 	private readonly agentDir: string;
 	private readonly getRoleModelOverrides: () => Record<string, string>;
@@ -77,41 +106,82 @@ export class RoleOrchestrator {
 	constructor(options: RoleOrchestratorOptions) {
 		this.session = options.session;
 		this.cwd = options.cwd;
+		this.roomId = options.roomId;
+		this.registry = options.registry;
 		this.rolesConfig = options.rolesConfig;
+		this.getRoomConfig = options.getRoomConfig;
 		this.onBroadcast = options.onBroadcast;
 		this.agentDir = options.agentDir ?? getAgentDir();
 		this.getRoleModelOverrides = options.getRoleModelOverrides;
 		this.runRole = options.runRole ?? runRoleSubprocess;
 	}
 
-	private discoverConfiguredRoles() {
+	private roomSkillsDir(): string {
+		return this.registry.getRoomSkillsDir(this.roomId);
+	}
+
+	private discoverConfiguredRoles(): { roles: ResolvedRoleConfig[] } {
+		const roomConfig = this.getRoomConfig();
+		const assigned = roomConfig.roleNames ?? [];
+		if (assigned.length === 0) {
+			return { roles: [] };
+		}
+		const assignedSet = new Set(assigned);
 		const discovery = discoverRoles({
 			cwd: this.cwd,
 			rolesDir: this.rolesConfig.rolesDir,
 			agentDir: this.agentDir,
 		});
+		const filtered = discovery.roles.filter((r) => assignedSet.has(r.name));
+		const withModels = applyRoleModelOverrides(filtered, this.getRoleModelOverrides());
 		return {
-			...discovery,
-			roles: applyRoleModelOverrides(discovery.roles, this.getRoleModelOverrides()),
+			roles: withModels.map((r) => resolveRoleForRoom(r, roomConfig, this.cwd)),
 		};
 	}
 
-	/** Returns false when roles are misconfigured and caller should use direct prompt. */
 	isReady(): boolean {
+		const roomConfig = this.getRoomConfig();
+		const assigned = roomConfig.roleNames ?? [];
+		if (assigned.length === 0) {
+			console.warn("[pi-hub] roles enabled but room has no assigned roles; falling back to direct prompt");
+			return false;
+		}
+		if (!assigned.includes(this.rolesConfig.pmRole)) {
+			console.warn(
+				`[pi-hub] PM role "${this.rolesConfig.pmRole}" must be added to the room role list; falling back to direct prompt`,
+			);
+			return false;
+		}
 		const discovery = this.discoverConfiguredRoles();
 		const pm = getRoleByName(discovery.roles, this.rolesConfig.pmRole);
 		if (!pm) {
 			console.warn(
-				`[pi-hub] roles.enabled but PM role "${this.rolesConfig.pmRole}" not found; falling back to direct prompt`,
+				`[pi-hub] PM role "${this.rolesConfig.pmRole}" not found in role library; falling back to direct prompt`,
 			);
 			return false;
 		}
 		const workers = discovery.roles.filter((r) => r.name !== this.rolesConfig.pmRole);
 		if (workers.length === 0) {
-			console.warn("[pi-hub] roles.enabled but no worker roles found; falling back to direct prompt");
+			console.warn("[pi-hub] room needs at least one worker role besides PM; falling back to direct prompt");
 			return false;
 		}
 		return true;
+	}
+
+	private async recordRoleMessage(
+		customType: string,
+		content: string,
+		details?: Record<string, unknown>,
+	): Promise<void> {
+		await this.session.sendCustomMessage(
+			{
+				customType,
+				content,
+				display: true,
+				details,
+			},
+			{ triggerTurn: false },
+		);
 	}
 
 	private persistUserMessage(text: string): void {
@@ -128,6 +198,7 @@ export class RoleOrchestrator {
 		this.persistUserMessage(userMessage);
 
 		const discovery = this.discoverConfiguredRoles();
+		const roomContext = buildRoomContextPrefix(this.session);
 
 		const pmRole = getRoleByName(discovery.roles, this.rolesConfig.pmRole);
 		if (!pmRole) {
@@ -135,14 +206,16 @@ export class RoleOrchestrator {
 		}
 
 		const workerRoles = discovery.roles.filter((r) => r.name !== this.rolesConfig.pmRole);
-		const catalog = formatRoleCatalog(workerRoles);
+		const roomRoster = formatRoomRosterForPm(workerRoles);
 
 		const pmResult = await this.runRole({
 			role: pmRole,
-			task: buildPmPrompt(userMessage, catalog),
+			task: buildPmPrompt(userMessage, roomRoster, this.rolesConfig.pmRole),
 			cwd: this.cwd,
 			agentDir: this.agentDir,
+			contextPrefix: roomContext,
 			signal,
+			roomSkillsDir: this.roomSkillsDir(),
 		});
 
 		if (pmResult.exitCode !== 0) {
@@ -152,6 +225,9 @@ export class RoleOrchestrator {
 
 		const plan = parseTaskPlan(pmResult.output);
 		this.onBroadcast({ type: "role_plan", plan });
+
+		const planSummary = `PM plan: ${plan.summary}\nTasks: ${plan.tasks.map((t) => `${t.role}: ${t.task}`).join("; ")}`;
+		await this.recordRoleMessage("hub_role_plan", planSummary, { plan });
 
 		const allGaps: TaskPlanGap[] = [...plan.uncovered];
 		const roleMap = new Map(workerRoles.map((r) => [r.name, r]));
@@ -192,13 +268,16 @@ export class RoleOrchestrator {
 				});
 
 				const contextParts: string[] = [];
+				if (roomContext) {
+					contextParts.push(roomContext);
+				}
 				for (const dep of task.dependsOn ?? []) {
 					const prior = outputsByRole.get(dep);
 					if (prior) {
 						contextParts.push(`Output from role "${dep}":\n${prior}`);
 					}
 				}
-				const contextPrefix = contextParts.length > 0 ? contextParts.join("\n\n") : undefined;
+				const contextPrefix = combineContextPrefix(...contextParts);
 
 				const runResult = await this.runRole({
 					role,
@@ -207,6 +286,7 @@ export class RoleOrchestrator {
 					agentDir: this.agentDir,
 					contextPrefix,
 					signal,
+					roomSkillsDir: this.roomSkillsDir(),
 				});
 
 				const failed = runResult.exitCode !== 0;
@@ -218,7 +298,15 @@ export class RoleOrchestrator {
 					taskId,
 					phase: failed ? "failed" : "done",
 					preview,
+					fullOutput: runResult.output,
 				});
+
+				const statusLabel = failed ? "failed" : "completed";
+				await this.recordRoleMessage(
+					"hub_role_output",
+					`[${role.name}] (${statusLabel})\nTask: ${task.task}\n\n${runResult.output}`,
+					{ role: role.name, taskId, task: task.task, exitCode: runResult.exitCode },
+				);
 
 				if (!failed) {
 					outputsByRole.set(task.role, runResult.output);

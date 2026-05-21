@@ -4,6 +4,7 @@
 	"host": "0.0.0.0",
 	"cwd": "E:\\path\\to\\your\\project",
 	"defaultRoomId": "default",
+	"_comment_rooms": "Room data: .pi/hub/rooms.json and .pi/hub/rooms/<roomId>/session.jsonl + config.json",
 	"models": {
 		"catalog": [
 			"anthropic/claude-opus-4-7",

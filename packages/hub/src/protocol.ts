@@ -56,7 +56,46 @@ export type HubExtensionUIResponse =
 // Client -> Hub
 // ============================================================================
 
+/** Hub-scoped commands (token required; no join). */
+export type HubScopedClientMessage =
+	| { type: "list_rooms"; token: string; id?: string }
+	| { type: "create_room"; token: string; roomId: string; title?: string; id?: string }
+	| { type: "delete_room"; token: string; roomId: string; deleteFiles?: boolean; id?: string }
+	| { type: "get_room_config"; token: string; roomId: string; id?: string }
+	| {
+			type: "set_room_config";
+			token: string;
+			roomId: string;
+			config: HubRoomConfigPayload;
+			id?: string;
+	  }
+	| { type: "list_roles"; token: string; id?: string }
+	| { type: "get_role"; token: string; name: string; id?: string }
+	| { type: "save_role"; token: string; name: string; content: string; id?: string }
+	| { type: "delete_role"; token: string; name: string; id?: string }
+	| { type: "add_room_role"; token: string; roomId: string; roleName: string; id?: string }
+	| { type: "remove_room_role"; token: string; roomId: string; roleName: string; id?: string }
+	| { type: "set_room_roles"; token: string; roomId: string; roleNames: string[]; id?: string };
+
+export function isHubScopedMessage(message: HubClientMessage): message is HubScopedClientMessage {
+	return (
+		message.type === "list_rooms" ||
+		message.type === "create_room" ||
+		message.type === "delete_room" ||
+		message.type === "get_room_config" ||
+		message.type === "set_room_config" ||
+		message.type === "list_roles" ||
+		message.type === "get_role" ||
+		message.type === "save_role" ||
+		message.type === "delete_role" ||
+		message.type === "add_room_role" ||
+		message.type === "remove_room_role" ||
+		message.type === "set_room_roles"
+	);
+}
+
 export type HubClientMessage =
+	| HubScopedClientMessage
 	| { type: "join"; roomId: string; token: string; displayName: string }
 	| {
 			type: "prompt";
@@ -206,6 +245,62 @@ export interface HubRoleProgress {
 	taskId: string;
 	phase: HubRoleProgressPhase;
 	preview?: string;
+	fullOutput?: string;
+}
+
+export interface HubRoomSummary {
+	roomId: string;
+	title?: string;
+	createdAt: string;
+	updatedAt: string;
+	clientCount?: number;
+}
+
+export interface HubRoomsList {
+	type: "rooms_list";
+	rooms: HubRoomSummary[];
+}
+
+export interface HubRoomDeleted {
+	type: "room_deleted";
+	roomId: string;
+}
+
+export interface HubRoomRoleOverridePayload {
+	skills?: string[];
+	rules?: string;
+	tools?: string[];
+	model?: string;
+}
+
+export interface HubRoomConfigPayload {
+	roleNames?: string[];
+	skills?: string[];
+	rules?: string;
+	roleOverrides?: Record<string, HubRoomRoleOverridePayload>;
+	rolesEnabled?: boolean;
+}
+
+export interface HubRoleSummaryPayload {
+	name: string;
+	description: string;
+	who?: string;
+	can?: string;
+	when?: string;
+	source: "user" | "project";
+	filePath: string;
+	model?: string;
+	tools?: string[];
+	skills?: string[];
+	rulesPath?: string;
+	systemPromptPreview: string;
+}
+
+export interface HubRoleContentPayload {
+	name: string;
+	source: "user" | "project";
+	filePath: string;
+	content: string;
 }
 
 export interface HubRoleGap {
@@ -230,4 +325,6 @@ export type HubServerMessage =
 	| HubRolePlan
 	| HubRoleProgress
 	| HubRoleGap
+	| HubRoomsList
+	| HubRoomDeleted
 	| HubError;

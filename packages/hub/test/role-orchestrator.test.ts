@@ -8,6 +8,7 @@ import { parseTaskPlan } from "../src/roles/parse-plan.ts";
 import type { RunRoleResult } from "../src/roles/runner.ts";
 import { planExecutionBatches } from "../src/roles/topo.ts";
 import type { RoleConfig, RoleGapEvent, RolePlanEvent, RoleProgressEvent } from "../src/roles/types.ts";
+import { RoomRegistry } from "../src/room-registry.ts";
 
 describe("parseTaskPlan", () => {
 	it("parses raw JSON", () => {
@@ -59,6 +60,9 @@ Plan only.`,
 			`---
 name: dev
 description: Developer
+who: Software developer
+can: Implement features
+when: Hands-on coding tasks
 ---
 Build.`,
 		);
@@ -82,7 +86,11 @@ Build.`,
 		const broadcasts: Array<RolePlanEvent | RoleGapEvent | RoleProgressEvent> = [];
 		let promptText = "";
 
+		const registry = new RoomRegistry(tempDir);
+		registry.createRoom("test");
+
 		const session = {
+			messages: [] as unknown[],
 			sessionManager: {
 				appendMessage: vi.fn(),
 				buildSessionContext: vi.fn(() => ({ messages: [], thinkingLevel: "off", model: undefined })),
@@ -91,12 +99,16 @@ Build.`,
 			prompt: vi.fn(async (text: string) => {
 				promptText = text;
 			}),
+			sendCustomMessage: vi.fn(async () => {}),
 		};
 
 		const orchestrator = new RoleOrchestrator({
 			session: session as never,
 			cwd: tempDir,
+			roomId: "test",
+			registry,
 			rolesConfig: resolveRolesConfig({ enabled: true, rolesDir: ".pi/roles", pmRole: "pm" }),
+			getRoomConfig: () => ({ roleNames: ["pm", "dev"] }),
 			getRoleModelOverrides: () => ({}),
 			onBroadcast: (msg) => broadcasts.push(msg),
 			runRole,
@@ -111,6 +123,13 @@ Build.`,
 		expect(runRole).toHaveBeenCalledTimes(2);
 		expect(promptText).toContain("build feature X");
 		expect(promptText).toContain("done");
+
+		const pmCall = runRole.mock.calls.find((c) => c[0].role.name === "pm");
+		expect(pmCall?.[0].task).toContain("Room worker roster");
+		expect(pmCall?.[0].task).toContain("global role library");
+		expect(pmCall?.[0].task).toContain("### dev");
+		expect(pmCall?.[0].task).toContain("- Who: Software developer");
+		expect(pmCall?.[0].task).not.toContain("### pm");
 	});
 
 	it("adds unknown role to uncovered", async () => {
@@ -124,19 +143,27 @@ Build.`,
 		});
 
 		const gaps: RoleGapEvent[] = [];
+		const registry = new RoomRegistry(tempDir);
+		registry.createRoom("test");
+
 		const session = {
+			messages: [] as unknown[],
 			sessionManager: {
 				appendMessage: vi.fn(),
 				buildSessionContext: vi.fn(() => ({ messages: [] })),
 			},
 			agent: { state: { messages: [] } },
 			prompt: vi.fn(async () => {}),
+			sendCustomMessage: vi.fn(async () => {}),
 		};
 
 		const orchestrator = new RoleOrchestrator({
 			session: session as never,
 			cwd: tempDir,
+			roomId: "test",
+			registry,
 			rolesConfig: resolveRolesConfig({ enabled: true }),
+			getRoomConfig: () => ({ roleNames: ["pm", "dev"] }),
 			getRoleModelOverrides: () => ({}),
 			onBroadcast: (msg) => {
 				if (msg.type === "role_gap") gaps.push(msg);
@@ -148,5 +175,75 @@ Build.`,
 		const gap = gaps.find((g) => g.uncovered.some((u) => u.reason.includes("unknown")));
 		expect(gap).toBeDefined();
 		expect(runRole).toHaveBeenCalledTimes(1);
+	});
+
+	it("isReady is false when room has no assigned roles", () => {
+		const registry = new RoomRegistry(tempDir);
+		registry.createRoom("test");
+
+		const session = {
+			messages: [] as unknown[],
+			sessionManager: {
+				appendMessage: vi.fn(),
+				buildSessionContext: vi.fn(() => ({ messages: [] })),
+			},
+			agent: { state: { messages: [] } },
+			prompt: vi.fn(async () => {}),
+			sendCustomMessage: vi.fn(async () => {}),
+		};
+
+		const orchestrator = new RoleOrchestrator({
+			session: session as never,
+			cwd: tempDir,
+			roomId: "test",
+			registry,
+			rolesConfig: resolveRolesConfig({ enabled: true, rolesDir: ".pi/roles", pmRole: "pm" }),
+			getRoomConfig: () => ({ roleNames: [] }),
+			getRoleModelOverrides: () => ({}),
+			onBroadcast: () => {},
+			runRole: vi.fn(),
+		});
+
+		expect(orchestrator.isReady()).toBe(false);
+	});
+
+	it("only runs roles listed in room roleNames", async () => {
+		const registry = new RoomRegistry(tempDir);
+		registry.createRoom("test");
+
+		const runRole = vi.fn(async (opts: { role: RoleConfig }): Promise<RunRoleResult> => {
+			if (opts.role.name === "pm") {
+				return { exitCode: 0, output: '{"summary":"s","tasks":[],"uncovered":[]}', stderr: "" };
+			}
+			return { exitCode: 0, output: "nope", stderr: "" };
+		});
+
+		const session = {
+			messages: [] as unknown[],
+			sessionManager: {
+				appendMessage: vi.fn(),
+				buildSessionContext: vi.fn(() => ({ messages: [] })),
+			},
+			agent: { state: { messages: [] } },
+			prompt: vi.fn(async () => {}),
+			sendCustomMessage: vi.fn(async () => {}),
+		};
+
+		const orchestrator = new RoleOrchestrator({
+			session: session as never,
+			cwd: tempDir,
+			roomId: "test",
+			registry,
+			rolesConfig: resolveRolesConfig({ enabled: true, rolesDir: ".pi/roles", pmRole: "pm" }),
+			getRoomConfig: () => ({ roleNames: ["pm"] }),
+			getRoleModelOverrides: () => ({}),
+			onBroadcast: () => {},
+			runRole,
+		});
+
+		expect(orchestrator.isReady()).toBe(false);
+		await orchestrator.run("test");
+		expect(runRole).toHaveBeenCalledTimes(1);
+		expect(runRole.mock.calls[0]?.[0].role.name).toBe("pm");
 	});
 });

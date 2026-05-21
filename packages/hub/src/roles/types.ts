@@ -1,7 +1,14 @@
 /** Role definition loaded from markdown frontmatter. */
 export interface RoleConfig {
 	name: string;
+	/** Short summary (required). */
 	description: string;
+	/** Who this role is (optional; shown to PM for assignment). */
+	who?: string;
+	/** What this role can do (optional). */
+	can?: string;
+	/** When the PM should assign work to this role (optional). */
+	when?: string;
 	model?: string;
 	tools?: string[];
 	skills?: string[];
@@ -46,6 +53,7 @@ export interface RoleProgressEvent {
 	taskId: string;
 	phase: RoleProgressPhase;
 	preview?: string;
+	fullOutput?: string;
 }
 
 export interface RolePlanEvent {

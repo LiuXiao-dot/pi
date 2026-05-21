@@ -63,6 +63,9 @@ function loadRolesFromDir(dir: string, source: "user" | "project", cwd: string):
 		roles.push({
 			name: frontmatter.name,
 			description: frontmatter.description,
+			who: frontmatter.who?.trim() || undefined,
+			can: frontmatter.can?.trim() || undefined,
+			when: frontmatter.when?.trim() || undefined,
 			model: frontmatter.model?.trim() || undefined,
 			tools: tools && tools.length > 0 ? tools : undefined,
 			skills: skills && skills.length > 0 ? skills : undefined,
@@ -117,10 +120,35 @@ export function getRoleByName(roles: RoleConfig[], name: string): RoleConfig | u
 	return roles.find((r) => r.name === name);
 }
 
+function resolveRolePresentation(role: RoleConfig): { who: string; can: string; when: string } {
+	return {
+		who: role.who?.trim() || `${role.name} — ${role.description}`,
+		can: role.can?.trim() || role.description,
+		when: role.when?.trim() || "When the delegated task matches this role's capabilities.",
+	};
+}
+
+/** Compact list (legacy / debugging). */
 export function formatRoleCatalog(roles: RoleConfig[], excludeName?: string): string {
 	const listed = roles.filter((r) => r.name !== excludeName);
 	if (listed.length === 0) {
 		return "(no roles configured)";
 	}
 	return listed.map((r) => `- ${r.name}: ${r.description}`).join("\n");
+}
+
+/**
+ * Room worker roster for PM task planning. Only includes roles assigned to the room.
+ * Each entry introduces who / can do / when to assign.
+ */
+export function formatRoomRosterForPm(workerRoles: RoleConfig[]): string {
+	if (workerRoles.length === 0) {
+		return "(no worker roles are assigned to this room)";
+	}
+	return workerRoles
+		.map((role) => {
+			const p = resolveRolePresentation(role);
+			return `### ${role.name}\n- Who: ${p.who}\n- Can do: ${p.can}\n- When to assign: ${p.when}`;
+		})
+		.join("\n\n");
 }

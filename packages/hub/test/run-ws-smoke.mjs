@@ -20,6 +20,29 @@ function fail(message) {
 	process.exit(1);
 }
 
+function ensureRoom(wsUrl, roomId) {
+	return new Promise((resolve, reject) => {
+		const ws = new WebSocket(wsUrl);
+		const reqId = "create-room";
+		ws.on("open", () => {
+			ws.send(JSON.stringify({ type: "create_room", token: TOKEN, roomId, id: reqId }));
+		});
+		ws.on("message", (data) => {
+			const msg = JSON.parse(String(data));
+			if (msg.type === "command_result" && msg.id === reqId) {
+				ws.close();
+				if (msg.success || String(msg.error ?? "").includes("already exists")) {
+					resolve();
+				} else {
+					reject(new Error(String(msg.error ?? "create_room failed")));
+				}
+			}
+		});
+		ws.on("error", reject);
+		setTimeout(() => reject(new Error("create_room timeout")), 30_000);
+	});
+}
+
 function connect(wsUrl, displayName) {
 	return new Promise((resolve, reject) => {
 		const ws = new WebSocket(wsUrl);
@@ -83,6 +106,8 @@ try {
 		rolesConfig: resolveRolesConfig(),
 		createSession: (cwd) => createTestAgentSession(cwd, faux),
 	});
+
+	await ensureRoom(handle.wsUrl, "test-room");
 
 	const wsA = await connect(handle.wsUrl, "Alice");
 	const wsB = await connect(handle.wsUrl, "Bob");

@@ -3,16 +3,15 @@ import type {
 	HubCommandResultMessage,
 	HubModelInfo,
 	HubModelsConfigPayload,
+	HubRoleContentPayload,
+	HubRoleSummaryPayload,
+	HubRoomConfigPayload,
+	HubRoomSummary,
 	HubServerMessage,
 } from "./protocol.ts";
 
 export type MessageHandler = (msg: HubServerMessage) => void;
 
-/**
- * Generate a UUID v4. Falls back to `crypto.getRandomValues` when
- * `crypto.randomUUID` is unavailable (non-secure contexts, e.g. plain HTTP
- * on a LAN IP).
- */
 function uuidV4(): string {
 	const c = globalThis.crypto as Crypto | undefined;
 	if (c && typeof c.randomUUID === "function") return c.randomUUID();
@@ -37,10 +36,9 @@ type CommandResolver = {
 export class HubClient {
 	private ws: WebSocket | null = null;
 	private handlers: MessageHandler[] = [];
-	private joined = false;
 	private readonly pendingCommands = new Map<string, CommandResolver>();
 	private readonly hubUrl: string;
-	private readonly roomId: string;
+	private roomId: string;
 	private readonly token: string;
 	private readonly displayName: string;
 
@@ -51,6 +49,10 @@ export class HubClient {
 		this.displayName = displayName;
 	}
 
+	getRoomId(): string {
+		return this.roomId;
+	}
+
 	onMessage(handler: MessageHandler): () => void {
 		this.handlers.push(handler);
 		return () => {
@@ -58,95 +60,99 @@ export class HubClient {
 		};
 	}
 
-	connect(): Promise<void> {
+	/** Open WebSocket only (no join). */
+	openSocket(): Promise<void> {
 		return new Promise((resolve, reject) => {
 			let settled = false;
 			const fail = (error: Error) => {
-				if (settled) {
-					return;
-				}
+				if (settled) return;
 				settled = true;
 				reject(error);
 			};
 
 			const timeoutId = setTimeout(() => {
-				fail(new Error("Connection timed out waiting for hub. Is pi-hub running? Check WebSocket URL and token."));
+				fail(new Error("Connection timed out waiting for hub."));
 				this.ws?.close();
-			}, 120_000);
+			}, 30_000);
 
 			this.ws = new WebSocket(this.hubUrl);
-
 			this.ws.onopen = () => {
-				this.send({
-					type: "join",
-					roomId: this.roomId,
-					token: this.token,
-					displayName: this.displayName,
-				});
-			};
-
-			this.ws.onmessage = (ev) => {
-				try {
-					const msg = JSON.parse(String(ev.data)) as HubServerMessage;
-					this.handleCommandResult(msg);
-					if (msg.type === "joined") {
-						this.joined = true;
-						if (!settled) {
-							settled = true;
-							clearTimeout(timeoutId);
-							resolve();
-						}
-					}
-					for (const h of this.handlers) {
-						h(msg);
-					}
-				} catch {
-					// ignore
+				if (!settled) {
+					settled = true;
+					clearTimeout(timeoutId);
+					resolve();
 				}
 			};
-
-			this.ws.onerror = () => {
-				fail(new Error(`WebSocket error connecting to ${this.hubUrl}`));
-			};
-
+			this.ws.onmessage = (ev) => this.dispatchMessage(ev);
+			this.ws.onerror = () => fail(new Error(`WebSocket error connecting to ${this.hubUrl}`));
 			this.ws.onclose = (ev) => {
 				clearTimeout(timeoutId);
 				if (!settled) {
-					const hint =
-						ev.code === 4401
-							? "Invalid token. Copy the token from .pi/hub.json on the machine running pi-hub."
-							: `WebSocket closed (${ev.code}${ev.reason ? `: ${ev.reason}` : ""}). Is pi-hub running at ${this.hubUrl}?`;
-					fail(new Error(hint));
-					return;
-				}
-				if (this.joined) {
-					for (const h of this.handlers) {
-						h({
-							type: "error",
-							code: "disconnected",
-							message:
-								ev.code === 4401
-									? "Disconnected: invalid token"
-									: `Disconnected from hub (${ev.code}${ev.reason ? `: ${ev.reason}` : ""})`,
-						});
-					}
+					fail(new Error(`WebSocket closed (${ev.code})`));
 				}
 			};
 		});
 	}
 
+	connect(): Promise<void> {
+		return this.openSocket().then(() => this.join(this.roomId));
+	}
+
+	reconnect(roomId: string): Promise<void> {
+		this.roomId = roomId;
+		if (this.ws?.readyState === WebSocket.OPEN) {
+			return this.join(roomId);
+		}
+		return this.connect();
+	}
+
+	join(roomId: string): Promise<void> {
+		this.roomId = roomId;
+		return new Promise((resolve, reject) => {
+			const timeoutId = setTimeout(() => {
+				reject(new Error("Join timed out"));
+			}, 120_000);
+
+			const unsub = this.onMessage((msg) => {
+				if (msg.type === "joined") {
+					clearTimeout(timeoutId);
+					unsub();
+					resolve();
+				}
+				if (msg.type === "error" && (msg.code === "join_failed" || msg.code === "room_not_found")) {
+					clearTimeout(timeoutId);
+					unsub();
+					reject(new Error(String(msg.message ?? msg.code)));
+				}
+			});
+
+			this.send({
+				type: "join",
+				roomId: this.roomId,
+				token: this.token,
+				displayName: this.displayName,
+			});
+		});
+	}
+
+	private dispatchMessage(ev: MessageEvent): void {
+		try {
+			const msg = JSON.parse(String(ev.data)) as HubServerMessage;
+			this.handleCommandResult(msg);
+			for (const h of this.handlers) {
+				h(msg);
+			}
+		} catch {
+			// ignore
+		}
+	}
+
 	private handleCommandResult(msg: HubServerMessage): void {
-		if (msg.type !== "command_result") {
-			return;
-		}
+		if (msg.type !== "command_result") return;
 		const result = msg as HubCommandResultMessage;
-		if (!result.id) {
-			return;
-		}
+		if (!result.id) return;
 		const pending = this.pendingCommands.get(result.id);
-		if (!pending) {
-			return;
-		}
+		if (!pending) return;
 		this.pendingCommands.delete(result.id);
 		if (result.success) {
 			pending.resolve(result.data);
@@ -182,6 +188,104 @@ export class HubClient {
 		if (this.ws?.readyState === WebSocket.OPEN) {
 			this.ws.send(JSON.stringify(msg));
 		}
+	}
+
+	async listRooms(): Promise<HubRoomSummary[]> {
+		const data = await this.sendCommand<{ rooms: HubRoomSummary[] }>({
+			type: "list_rooms",
+			token: this.token,
+		});
+		return data.rooms ?? [];
+	}
+
+	async createRoom(roomId: string, title?: string): Promise<void> {
+		await this.sendCommand({
+			type: "create_room",
+			token: this.token,
+			roomId,
+			title,
+		});
+	}
+
+	async deleteRoom(roomId: string, deleteFiles = true): Promise<void> {
+		await this.sendCommand({
+			type: "delete_room",
+			token: this.token,
+			roomId,
+			deleteFiles,
+		});
+	}
+
+	async getRoomConfig(roomId: string): Promise<HubRoomConfigPayload> {
+		const data = await this.sendCommand<{ config: HubRoomConfigPayload }>({
+			type: "get_room_config",
+			token: this.token,
+			roomId,
+		});
+		return data.config ?? {};
+	}
+
+	async setRoomConfig(roomId: string, config: HubRoomConfigPayload): Promise<HubRoomConfigPayload> {
+		const data = await this.sendCommand<{ config: HubRoomConfigPayload }>({
+			type: "set_room_config",
+			token: this.token,
+			roomId,
+			config,
+		});
+		return data.config ?? config;
+	}
+
+	async addRoomRole(roleName: string, roomId = this.roomId): Promise<HubRoomConfigPayload> {
+		const data = await this.sendCommand<{ config: HubRoomConfigPayload }>({
+			type: "add_room_role",
+			token: this.token,
+			roomId,
+			roleName,
+		});
+		return data.config ?? {};
+	}
+
+	async removeRoomRole(roleName: string, roomId = this.roomId): Promise<HubRoomConfigPayload> {
+		const data = await this.sendCommand<{ config: HubRoomConfigPayload }>({
+			type: "remove_room_role",
+			token: this.token,
+			roomId,
+			roleName,
+		});
+		return data.config ?? {};
+	}
+
+	async listRoles(): Promise<HubRoleSummaryPayload[]> {
+		const data = await this.sendCommand<{ roles: HubRoleSummaryPayload[] }>({
+			type: "list_roles",
+			token: this.token,
+		});
+		return data.roles ?? [];
+	}
+
+	async getRole(name: string): Promise<HubRoleContentPayload> {
+		return this.sendCommand<HubRoleContentPayload>({
+			type: "get_role",
+			token: this.token,
+			name,
+		});
+	}
+
+	async saveRole(name: string, content: string): Promise<HubRoleContentPayload> {
+		return this.sendCommand<HubRoleContentPayload>({
+			type: "save_role",
+			token: this.token,
+			name,
+			content,
+		});
+	}
+
+	async deleteRole(name: string): Promise<void> {
+		await this.sendCommand({
+			type: "delete_role",
+			token: this.token,
+			name,
+		});
 	}
 
 	async getAvailableModels(): Promise<HubModelInfo[]> {

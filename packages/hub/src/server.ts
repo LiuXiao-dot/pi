@@ -23,22 +23,26 @@ export interface HubServerHandle {
 
 export async function startHubServer(options: HubServerOptions): Promise<HubServerHandle> {
 	const publicDir = options.publicDir ?? defaultPublicDir();
+	const defaultRoomId = options.defaultRoomId ?? "default";
 	const roomManager = new RoomManager({
 		cwd: options.cwd,
 		agentDir: options.agentDir,
 		sessionPath: options.sessionPath,
-		defaultRoomId: options.defaultRoomId,
+		defaultRoomId,
 		modelsConfig: options.modelsConfig,
 		rolesConfig: options.rolesConfig,
 		createSession: options.createSession,
 	});
+	roomManager.initialize(defaultRoomId);
 
 	const server = createHttpServer({ publicDir });
 
 	void new WsHub(server, {
 		token: options.token,
 		roomManager,
-		defaultRoomId: options.defaultRoomId ?? "default",
+		defaultRoomId,
+		rolesConfig: options.rolesConfig,
+		cwd: options.cwd,
 	});
 
 	await new Promise<void>((resolve, reject) => {

@@ -67,6 +67,7 @@ export interface HubRoleProgressMessage extends HubServerMessage {
 	taskId: string;
 	phase: HubRoleProgressPhase;
 	preview?: string;
+	fullOutput?: string;
 }
 
 export interface HubRoleGapMessage extends HubServerMessage {
@@ -86,4 +87,46 @@ export interface HubModelsConfigPayload {
 	catalog: string[];
 	sessionModelRef?: string;
 	roles: HubRoleModelEntry[];
+}
+
+export interface HubRoomSummary {
+	roomId: string;
+	title?: string;
+	createdAt: string;
+	updatedAt: string;
+	clientCount?: number;
+}
+
+export interface HubRoomRoleOverridePayload {
+	skills?: string[];
+	rules?: string;
+	tools?: string[];
+	model?: string;
+}
+
+export interface HubRoomConfigPayload {
+	roleNames?: string[];
+	skills?: string[];
+	rules?: string;
+	roleOverrides?: Record<string, HubRoomRoleOverridePayload>;
+	rolesEnabled?: boolean;
+}
+
+export interface HubRoleSummaryPayload {
+	name: string;
+	description: string;
+	source: "user" | "project";
+	filePath: string;
+	model?: string;
+	tools?: string[];
+	skills?: string[];
+	rulesPath?: string;
+	systemPromptPreview: string;
+}
+
+export interface HubRoleContentPayload {
+	name: string;
+	source: "user" | "project";
+	filePath: string;
+	content: string;
 }

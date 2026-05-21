@@ -3,17 +3,19 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
+import type { ResolvedRoleConfig } from "./resolve-config.ts";
 import { resolveSkillPaths } from "./resolve-skills.ts";
 import type { RoleConfig } from "./types.ts";
 
 export interface RunRoleOptions {
-	role: RoleConfig;
+	role: RoleConfig | ResolvedRoleConfig;
 	task: string;
 	cwd: string;
 	agentDir: string;
 	/** Injected into the user prompt (e.g. outputs from dependency roles). */
 	contextPrefix?: string;
 	signal?: AbortSignal;
+	roomSkillsDir?: string;
 }
 
 export interface RunRoleResult {
@@ -61,7 +63,10 @@ function writeTempPromptFile(agentName: string, prompt: string): { dir: string; 
 	return { dir: tmpDir, filePath };
 }
 
-function resolveAppendSystemPrompt(role: RoleConfig): string {
+function resolveAppendSystemPrompt(role: RoleConfig | ResolvedRoleConfig): string {
+	if ("resolvedRulesText" in role && role.resolvedRulesText) {
+		return role.resolvedRulesText;
+	}
 	if (role.rulesPath && existsSync(role.rulesPath)) {
 		try {
 			return readFileSync(role.rulesPath, "utf-8").trim();
@@ -73,7 +78,7 @@ function resolveAppendSystemPrompt(role: RoleConfig): string {
 }
 
 export async function runRoleSubprocess(options: RunRoleOptions): Promise<RunRoleResult> {
-	const { role, task, cwd, agentDir, contextPrefix, signal } = options;
+	const { role, task, cwd, agentDir, contextPrefix, signal, roomSkillsDir } = options;
 
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
 	if (role.model) {
@@ -83,7 +88,8 @@ export async function runRoleSubprocess(options: RunRoleOptions): Promise<RunRol
 		args.push("--tools", role.tools.join(","));
 	}
 
-	const skillPaths = role.skills ? resolveSkillPaths(cwd, agentDir, role.skills) : [];
+	const skillNames = "resolvedSkills" in role && role.resolvedSkills ? role.resolvedSkills : role.skills;
+	const skillPaths = skillNames ? resolveSkillPaths(cwd, agentDir, skillNames, roomSkillsDir) : [];
 	for (const skillPath of skillPaths) {
 		args.push("--skill", skillPath);
 	}
