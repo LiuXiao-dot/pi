@@ -107,6 +107,7 @@ export type HubClientMessage =
 	| { type: "steer"; id?: string; message: string; images?: ImageContent[] }
 	| { type: "follow_up"; id?: string; message: string; images?: ImageContent[] }
 	| { type: "abort"; id?: string }
+	| { type: "leave" }
 	| { type: "get_state"; id?: string }
 	| { type: "get_available_models"; id?: string }
 	| { type: "get_models_config"; id?: string }
@@ -149,6 +150,11 @@ export interface HubJoined {
 	roomId: string;
 	state: RpcSessionState;
 	messages: unknown[];
+}
+
+export interface HubLeft {
+	type: "left";
+	roomId: string;
 }
 
 export type HubActivityPhase = "idle" | "replying" | "thinking" | "tool" | "compacting";
@@ -315,6 +321,7 @@ export type HubExtensionUIOutbound = HubExtensionUIRequest & {
 
 export type HubServerMessage =
 	| HubJoined
+	| HubLeft
 	| HubAgentEvent
 	| HubActivityUpdate
 	| HubQueueUpdate

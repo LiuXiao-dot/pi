@@ -3,15 +3,20 @@ import type {
 	HubActivityUpdateMessage,
 	HubModelInfo,
 	HubModelsConfigPayload,
+	HubRoomSummary,
 	HubServerMessage,
 	HubSessionState,
 } from "./protocol.ts";
 
-interface StoredConnect {
+interface StoredSession {
 	hubUrl: string;
-	roomId: string;
 	token: string;
 	displayName: string;
+}
+
+/** Persisted shape; roomId is last-opened room (legacy), not required to sign in. */
+interface StoredConnectFile extends StoredSession {
+	roomId?: string;
 }
 
 const STORAGE_KEY = "pi-hub-connect";
@@ -48,22 +53,54 @@ function formatModelLabel(model: HubModelInfo): string {
 	return `${model.provider}/${model.id} — ${model.name}${auth}`;
 }
 
-function loadStored(): Partial<StoredConnect> {
+function loadStored(): Partial<StoredConnectFile> {
 	try {
-		return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Partial<StoredConnect>;
+		return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Partial<StoredConnectFile>;
 	} catch {
 		return {};
 	}
 }
 
-function saveStored(data: StoredConnect): void {
-	localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+function saveSession(session: StoredSession, lastRoomId?: string): void {
+	const payload: StoredConnectFile = { ...session };
+	if (lastRoomId) {
+		payload.roomId = lastRoomId;
+	}
+	localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+}
+
+function formatRelativeTime(iso: string): string {
+	const date = new Date(iso);
+	const diff = Date.now() - date.getTime();
+	if (diff < 60_000) return "just now";
+	if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+	if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+	return date.toLocaleDateString();
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] {
 	const node = document.createElement(tag);
 	if (className) node.className = className;
 	return node;
+}
+
+/** Create room in hub registry when missing (join requires create_room first). */
+async function ensureRoomRegistered(session: StoredSession, roomId: string, client?: HubClient): Promise<void> {
+	const tmp = client ?? new HubClient(session.hubUrl, roomId, session.token, session.displayName);
+	const ownsClient = !client;
+	try {
+		if (ownsClient) {
+			await tmp.openSocket();
+		}
+		const rooms = await tmp.listRooms();
+		if (!rooms.some((r) => r.roomId === roomId)) {
+			await tmp.createRoom(roomId);
+		}
+	} finally {
+		if (ownsClient) {
+			tmp.disconnect();
+		}
+	}
 }
 
 function transitionView(root: HTMLElement, render: () => void): void {
@@ -105,7 +142,7 @@ function messageRoleClass(msg: { role?: string; customType?: string }): string {
 	return msg.role ?? "unknown";
 }
 
-function renderConnect(root: HTMLElement, onConnect: (cfg: StoredConnect) => void): void {
+function renderLogin(root: HTMLElement): void {
 	const stored = loadStored();
 	root.innerHTML = "";
 	const shell = el("div", "connect-shell");
@@ -119,13 +156,12 @@ function renderConnect(root: HTMLElement, onConnect: (cfg: StoredConnect) => voi
 	panel.appendChild(
 		Object.assign(el("p", "hint"), {
 			textContent:
-				"Open this page from the same host as pi-hub (e.g. http://localhost:3141). Copy the token from .pi/hub.json on the server.",
+				"Sign in to the hub, then pick a room. Open from the same host as pi-hub (e.g. http://localhost:3141). Token from .pi/hub.json.",
 		}),
 	);
 
-	const fields: Array<{ key: keyof StoredConnect; label: string; type?: string }> = [
+	const fields: Array<{ key: keyof StoredSession; label: string; type?: string }> = [
 		{ key: "hubUrl", label: "WebSocket URL" },
-		{ key: "roomId", label: "Room ID" },
 		{ key: "token", label: "Token", type: "password" },
 		{ key: "displayName", label: "Your name" },
 	];
@@ -138,8 +174,7 @@ function renderConnect(root: HTMLElement, onConnect: (cfg: StoredConnect) => voi
 		label.appendChild(span);
 		const input = el("input") as HTMLInputElement;
 		if (f.type) input.type = f.type;
-		input.value =
-			(stored[f.key] as string) ?? (f.key === "hubUrl" ? defaultWsUrl() : f.key === "roomId" ? "default" : "");
+		input.value = (stored[f.key] as string) ?? (f.key === "hubUrl" ? defaultWsUrl() : "");
 		inputs[f.key] = input;
 		label.appendChild(input);
 		panel.appendChild(label);
@@ -148,107 +183,214 @@ function renderConnect(root: HTMLElement, onConnect: (cfg: StoredConnect) => voi
 	const err = el("div", "error-banner hidden");
 	panel.appendChild(err);
 
-	const roomSection = el("div", "connect-rooms");
-	roomSection.appendChild(Object.assign(el("p", "hint"), { textContent: "Rooms (create before first join):" }));
-	const roomSelect = el("select") as HTMLSelectElement;
-	const newRoomInput = el("input") as HTMLInputElement;
-	newRoomInput.placeholder = "new-room-id";
-	const roomActions = el("div", "room-actions");
-	const refreshRoomsBtn = el("button", "secondary-btn");
-	refreshRoomsBtn.type = "button";
-	refreshRoomsBtn.textContent = "Refresh rooms";
-	const createRoomBtn = el("button", "secondary-btn");
-	createRoomBtn.type = "button";
-	createRoomBtn.textContent = "Create room";
-	roomActions.append(refreshRoomsBtn, createRoomBtn);
-	roomSection.append(roomSelect, newRoomInput, roomActions);
-	panel.appendChild(roomSection);
-
-	async function refreshRoomList(): Promise<void> {
-		const token = inputs.token!.value.trim();
-		const hubUrl = inputs.hubUrl!.value.trim() || defaultWsUrl();
-		if (!token) {
-			err.textContent = "Token required to list rooms";
-			err.classList.remove("hidden");
-			return;
-		}
-		const tmp = new HubClient(hubUrl, "default", token, "setup");
-		try {
-			await tmp.openSocket();
-			const rooms = await tmp.listRooms();
-			roomSelect.innerHTML = "";
-			for (const r of rooms) {
-				const opt = el("option") as HTMLOptionElement;
-				opt.value = r.roomId;
-				opt.textContent = r.title ? `${r.roomId} — ${r.title}` : r.roomId;
-				roomSelect.appendChild(opt);
-			}
-			if (rooms.length > 0) {
-				inputs.roomId!.value = roomSelect.value;
-			}
-			err.classList.add("hidden");
-		} catch (e) {
-			err.textContent = e instanceof Error ? e.message : String(e);
-			err.classList.remove("hidden");
-		} finally {
-			tmp.disconnect();
-		}
-	}
-
-	refreshRoomsBtn.onclick = () => void refreshRoomList();
-	createRoomBtn.onclick = () => {
+	const btn = el("button", "btn-primary");
+	btn.textContent = "Sign in";
+	btn.onclick = () => {
 		void (async () => {
-			const token = inputs.token!.value.trim();
-			const hubUrl = inputs.hubUrl!.value.trim() || defaultWsUrl();
-			const newId = newRoomInput.value.trim();
-			if (!token || !newId) {
-				err.textContent = "Token and new room id required";
+			const session: StoredSession = {
+				hubUrl: inputs.hubUrl!.value.trim() || defaultWsUrl(),
+				token: inputs.token!.value.trim(),
+				displayName: inputs.displayName!.value.trim() || "anonymous",
+			};
+			if (!session.token) {
+				err.textContent = "Token is required";
 				err.classList.remove("hidden");
 				return;
 			}
-			const tmp = new HubClient(hubUrl, newId, token, "setup");
+			btn.disabled = true;
+			const client = new HubClient(session.hubUrl, "_lobby", session.token, session.displayName);
 			try {
-				await tmp.openSocket();
-				await tmp.createRoom(newId);
-				await refreshRoomList();
-				roomSelect.value = newId;
-				inputs.roomId!.value = newId;
+				await client.openSocket();
+				await client.listRooms();
+				err.classList.add("hidden");
+				saveSession(session, stored.roomId);
+				transitionView(root, () =>
+					renderRoomLobby(root, session, client, stored.roomId, () => {
+						client.disconnect();
+						transitionView(root, () => renderLogin(root));
+					}),
+				);
 			} catch (e) {
+				client.disconnect();
 				err.textContent = e instanceof Error ? e.message : String(e);
 				err.classList.remove("hidden");
 			} finally {
-				tmp.disconnect();
+				btn.disabled = false;
 			}
 		})();
-	};
-
-	roomSelect.addEventListener("change", () => {
-		inputs.roomId!.value = roomSelect.value;
-	});
-
-	const btn = el("button", "btn-primary");
-	btn.textContent = "Connect";
-	btn.onclick = () => {
-		const cfg: StoredConnect = {
-			hubUrl: inputs.hubUrl!.value.trim() || defaultWsUrl(),
-			roomId: roomSelect.value || inputs.roomId!.value.trim() || "default",
-			token: inputs.token!.value.trim(),
-			displayName: inputs.displayName!.value.trim() || "anonymous",
-		};
-		if (!cfg.token) {
-			err.textContent = "Token is required";
-			err.classList.remove("hidden");
-			return;
-		}
-		saveStored(cfg);
-		transitionView(root, () => onConnect(cfg));
 	};
 	panel.appendChild(btn);
 	shell.appendChild(panel);
 	root.appendChild(shell);
 }
 
-function renderChat(root: HTMLElement, cfg: StoredConnect): void {
+function renderRoomLobby(
+	root: HTMLElement,
+	session: StoredSession,
+	client: HubClient,
+	initialLastRoomId: string | undefined,
+	onSignOut: () => void,
+): void {
+	root.innerHTML = "";
+	const shell = el("div", "lobby-shell");
+
+	const header = el("header", "lobby-header");
+	const title = el("h1", "lobby-title");
+	title.textContent = "Rooms";
+	const user = el("span", "lobby-user");
+	user.textContent = session.displayName;
+	const signOutBtn = el("button", "secondary-btn");
+	signOutBtn.type = "button";
+	signOutBtn.textContent = "Sign out";
+	signOutBtn.onclick = () => onSignOut();
+	header.append(title, user, signOutBtn);
+	shell.appendChild(header);
+
+	const err = el("div", "error-banner hidden");
+	shell.appendChild(err);
+
+	const createRow = el("div", "lobby-create-row");
+	const newRoomInput = el("input") as HTMLInputElement;
+	newRoomInput.placeholder = "new-room-id";
+	const createBtn = el("button", "secondary-btn");
+	createBtn.type = "button";
+	createBtn.textContent = "Create room";
+	createRow.append(newRoomInput, createBtn);
+	shell.appendChild(createRow);
+
+	const list = el("ul", "room-list");
+	shell.appendChild(list);
+
+	let lastRoomId = initialLastRoomId;
+
+	function showLobbyError(message: string): void {
+		err.textContent = message;
+		err.classList.remove("hidden");
+	}
+
+	function renderRoomRows(rooms: HubRoomSummary[]): void {
+		list.innerHTML = "";
+		if (rooms.length === 0) {
+			const empty = el("li", "room-list-empty");
+			empty.textContent = "No rooms yet. Create one above.";
+			list.appendChild(empty);
+			return;
+		}
+		for (const r of rooms) {
+			const li = el("li");
+			const row = el("button", "room-row");
+			row.type = "button";
+			if (r.roomId === lastRoomId) {
+				row.classList.add("active");
+			}
+			const main = el("span", "room-row-title");
+			main.textContent = r.title?.trim() ? r.title : r.roomId;
+			const meta = el("span", "room-card-meta");
+			const online = r.clientCount ?? 0;
+			meta.textContent = `${formatRelativeTime(r.updatedAt)} · ${online} online`;
+			row.append(main, meta);
+
+			const roomId = r.roomId;
+			row.onclick = () => {
+				void (async () => {
+					try {
+						await ensureRoomRegistered(session, roomId, client);
+						saveSession(session, roomId);
+						transitionView(root, () =>
+							renderChat(
+								root,
+								session,
+								client,
+								roomId,
+								() => {
+									void (async () => {
+										try {
+											if (client.isJoined()) {
+												await client.leave();
+											}
+										} catch {
+											// ignore leave errors when returning to lobby
+										}
+										transitionView(root, () => renderRoomLobby(root, session, client, roomId, onSignOut));
+									})();
+								},
+								onSignOut,
+							),
+						);
+					} catch (e) {
+						showLobbyError(e instanceof Error ? e.message : String(e));
+					}
+				})();
+			};
+
+			const actions = el("div", "room-row-actions");
+			const deleteBtn = el("button", "secondary-btn danger-btn");
+			deleteBtn.type = "button";
+			deleteBtn.textContent = "Delete";
+			deleteBtn.onclick = (ev) => {
+				ev.stopPropagation();
+				if (!confirm(`Delete room "${roomId}" and all session data?`)) return;
+				void (async () => {
+					try {
+						if (client.isJoined() && client.getRoomId() === roomId) {
+							await client.leave();
+						}
+						await client.deleteRoom(roomId, true);
+						if (lastRoomId === roomId) {
+							lastRoomId = undefined;
+						}
+						await refreshList();
+					} catch (e) {
+						showLobbyError(e instanceof Error ? e.message : String(e));
+					}
+				})();
+			};
+			actions.appendChild(deleteBtn);
+			li.append(row, actions);
+			list.appendChild(li);
+		}
+	}
+
+	async function refreshList(): Promise<void> {
+		const rooms = await client.listRooms();
+		renderRoomRows(rooms);
+		err.classList.add("hidden");
+	}
+
+	createBtn.onclick = () => {
+		const id = newRoomInput.value.trim();
+		if (!id) return;
+		void (async () => {
+			try {
+				await client.createRoom(id);
+				newRoomInput.value = "";
+				lastRoomId = id;
+				await refreshList();
+			} catch (e) {
+				showLobbyError(e instanceof Error ? e.message : String(e));
+			}
+		})();
+	};
+
+	client.onMessage((msg) => {
+		if (msg.type === "room_deleted") {
+			void refreshList();
+		}
+	});
+
+	root.appendChild(shell);
+	void refreshList().catch((e) => showLobbyError(e instanceof Error ? e.message : String(e)));
+}
+
+function renderChat(
+	root: HTMLElement,
+	session: StoredSession,
+	client: HubClient,
+	roomId: string,
+	onBackToRooms: () => void,
+	onSignOut: () => void,
+): void {
+	const cfg = { ...session, roomId };
 	root.innerHTML = "";
 	const layout = el("div", "chat-layout");
 	const sidebarBackdrop = el("div", "sidebar-backdrop");
@@ -277,10 +419,26 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 		else openSidebar();
 	};
 	headerBrand.appendChild(sidebarToggle);
+	const backRoomsBtn = el("button", "secondary-btn header-rooms-btn");
+	backRoomsBtn.type = "button";
+	backRoomsBtn.textContent = "Rooms";
+	backRoomsBtn.onclick = () => {
+		void (async () => {
+			try {
+				if (client.isJoined()) {
+					await client.leave();
+				}
+			} catch {
+				// ignore
+			}
+			onBackToRooms();
+		})();
+	};
+	headerBrand.appendChild(backRoomsBtn);
 	const logo = el("span", "logo");
 	logo.textContent = "pi Hub";
 	const room = el("span", "room");
-	room.textContent = cfg.roomId;
+	room.textContent = roomId;
 	headerBrand.append(logo, room);
 
 	const statusWrap = el("div", "status-wrap");
@@ -377,23 +535,6 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 
 	root.appendChild(layout);
 
-	// Sidebar: rooms
-	const roomsDetails = el("details", "sidebar-section");
-	roomsDetails.open = true;
-	roomsDetails.appendChild(Object.assign(el("summary"), { textContent: "Rooms" }));
-	const roomsList = el("ul", "rooms-list");
-	const roomCreateRow = el("div", "sidebar-row");
-	const roomNewInput = el("input") as HTMLInputElement;
-	roomNewInput.placeholder = "new-room-id";
-	const roomCreateBtn = el("button", "secondary-btn");
-	roomCreateBtn.type = "button";
-	roomCreateBtn.textContent = "Create";
-	const roomDeleteBtn = el("button", "secondary-btn danger-btn");
-	roomDeleteBtn.type = "button";
-	roomDeleteBtn.textContent = "Delete current";
-	roomCreateRow.append(roomNewInput, roomCreateBtn);
-	roomsDetails.append(roomsList, roomCreateRow, roomDeleteBtn);
-
 	// Sidebar: room config
 	const roomCfgDetails = el("details", "sidebar-section");
 	roomCfgDetails.appendChild(Object.assign(el("summary"), { textContent: "Room config" }));
@@ -445,9 +586,7 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 	deleteRoleBtn.textContent = "Delete role";
 	rolesDetails.append(roleSelect, roleMeta, roleEditor, saveRoleBtn, deleteRoleBtn);
 
-	sidebar.append(roomsDetails, roomCfgDetails, roomRolesDetails, rolesDetails);
-
-	const client = new HubClient(cfg.hubUrl, cfg.roomId, cfg.token, cfg.displayName);
+	sidebar.append(roomCfgDetails, roomRolesDetails, rolesDetails);
 	let streamingAssistantEl: HTMLElement | null = null;
 	let turnHostName: string | null = null;
 	let clientId = "";
@@ -941,41 +1080,6 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 		})();
 	};
 
-	async function refreshRoomsSidebar(): Promise<void> {
-		try {
-			const rooms = await client.listRooms();
-			roomsList.innerHTML = "";
-			for (const r of rooms) {
-				const li = el("li");
-				const btn = el("button", "room-link");
-				btn.type = "button";
-				btn.textContent = r.roomId;
-				if (r.roomId === client.getRoomId()) {
-					btn.classList.add("active");
-				} else {
-					btn.onclick = () => {
-						void (async () => {
-							try {
-								await client.reconnect(r.roomId);
-								room.textContent = r.roomId;
-								cfg.roomId = r.roomId;
-								saveStored(cfg);
-								await refreshRoomsSidebar();
-								await loadRoomConfigUi();
-							} catch (e) {
-								showError(e instanceof Error ? e.message : String(e));
-							}
-						})();
-					};
-				}
-				li.appendChild(btn);
-				roomsList.appendChild(li);
-			}
-		} catch (e) {
-			showError(e instanceof Error ? e.message : String(e));
-		}
-	}
-
 	async function loadRoomConfigUi(): Promise<void> {
 		const config = await client.getRoomConfig(client.getRoomId());
 		roomSkillsInput.value = (config.skills ?? []).join(", ");
@@ -1061,47 +1165,6 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 		roleMeta.textContent = `${role.source} · ${role.filePath}`;
 	}
 
-	roomCreateBtn.onclick = () => {
-		void (async () => {
-			const id = roomNewInput.value.trim();
-			if (!id) return;
-			try {
-				await client.createRoom(id);
-				await client.reconnect(id);
-				room.textContent = id;
-				cfg.roomId = id;
-				saveStored(cfg);
-				await refreshRoomsSidebar();
-			} catch (e) {
-				showError(e instanceof Error ? e.message : String(e));
-			}
-		})();
-	};
-
-	roomDeleteBtn.onclick = () => {
-		if (!confirm(`Delete room "${client.getRoomId()}" and all session data?`)) return;
-		void (async () => {
-			try {
-				const id = client.getRoomId();
-				await client.deleteRoom(id, true);
-				let rooms = await client.listRooms();
-				if (rooms.length === 0) {
-					await client.createRoom("default");
-					rooms = await client.listRooms();
-				}
-				const nextId = rooms[0]!.roomId;
-				await client.reconnect(nextId);
-				room.textContent = nextId;
-				cfg.roomId = nextId;
-				saveStored(cfg);
-				await refreshRoomsSidebar();
-				await loadRoomConfigUi();
-			} catch (e) {
-				showError(e instanceof Error ? e.message : String(e));
-			}
-		})();
-	};
-
 	saveRoomCfgBtn.onclick = () => {
 		void (async () => {
 			try {
@@ -1147,15 +1210,26 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 		})();
 	};
 
+	function returnToLobby(highlightRoomId?: string): void {
+		void (async () => {
+			try {
+				if (client.isJoined()) {
+					await client.leave();
+				}
+			} catch {
+				// ignore
+			}
+			onBackToRooms();
+			if (highlightRoomId) {
+				saveSession(session, highlightRoomId);
+			}
+		})();
+	}
+
 	client.onMessage((msg) => {
 		if (msg.type === "room_deleted" && msg.roomId === client.getRoomId()) {
 			showError("This room was deleted");
-			client.disconnect();
-			setTimeout(
-				() =>
-					transitionView(root, () => renderConnect(root, (c) => transitionView(root, () => renderChat(root, c)))),
-				1500,
-			);
+			returnToLobby();
 			return;
 		}
 		if (msg.type === "joined") {
@@ -1182,7 +1256,14 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 		if (msg.type === "error") {
 			const text = (msg.message as string) ?? "Error";
 			showError(text);
-			if (msg.code === "disconnected" || msg.code === "join_failed" || msg.code === "unauthorized") {
+			if (msg.code === "unauthorized") {
+				setConnectionLive(false);
+				status.textContent = "Unauthorized";
+				client.disconnect();
+				onSignOut();
+				return;
+			}
+			if (msg.code === "disconnected" || msg.code === "join_failed") {
 				setConnectionLive(false);
 				status.textContent = "Disconnected";
 			}
@@ -1212,10 +1293,10 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 	});
 
 	updateHeaderStatus();
-	client
-		.connect()
+	saveSession(session, roomId);
+	ensureRoomRegistered(session, roomId, client)
+		.then(() => client.switchRoom(roomId))
 		.then(() => {
-			void refreshRoomsSidebar();
 			void loadRoomConfigUi();
 			void refreshRolesSidebar();
 			void refreshRoomAssignedRoles();
@@ -1224,28 +1305,36 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 			setConnectionLive(false);
 			showError(e instanceof Error ? e.message : String(e));
 			status.textContent = "Failed";
-			setTimeout(
-				() =>
-					transitionView(root, () => renderConnect(root, (c) => transitionView(root, () => renderChat(root, c)))),
-				2000,
-			);
+			returnToLobby(roomId);
 		});
 }
 
 const app = document.getElementById("app")!;
 
-function tryAutoConnect(): boolean {
+function signOut(client: HubClient): void {
+	client.disconnect();
+	transitionView(app, () => renderLogin(app));
+}
+
+function tryAutoSession(): boolean {
 	const stored = loadStored();
-	if (!stored.token || !stored.hubUrl || !stored.roomId || !stored.displayName) return false;
-	renderChat(app, {
+	if (!stored.token || !stored.hubUrl || !stored.displayName) {
+		return false;
+	}
+	const session: StoredSession = {
 		hubUrl: stored.hubUrl,
-		roomId: stored.roomId,
 		token: stored.token,
 		displayName: stored.displayName,
+	};
+	const client = new HubClient(session.hubUrl, "_lobby", session.token, session.displayName);
+	renderRoomLobby(app, session, client, stored.roomId, () => signOut(client));
+	void client.openSocket().catch(() => {
+		client.disconnect();
+		transitionView(app, () => renderLogin(app));
 	});
 	return true;
 }
 
-if (!tryAutoConnect()) {
-	renderConnect(app, (cfg) => transitionView(app, () => renderChat(app, cfg)));
+if (!tryAutoSession()) {
+	renderLogin(app);
 }

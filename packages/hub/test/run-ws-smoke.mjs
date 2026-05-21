@@ -108,6 +108,15 @@ try {
 	});
 
 	await ensureRoom(handle.wsUrl, "test-room");
+	await ensureRoom(handle.wsUrl, "other-room");
+
+	const wsLeave = await connect(handle.wsUrl, "LeaveTest");
+	wsLeave.send(JSON.stringify({ type: "leave" }));
+	await waitForMessage(wsLeave, (m) => m.type === "left" && m.roomId === "test-room");
+	const wsRejoin = await connect(handle.wsUrl, "LeaveTest");
+	await waitForMessage(wsRejoin, (m) => m.type === "joined" && m.roomId === "other-room");
+	wsLeave.close();
+	wsRejoin.close();
 
 	const wsA = await connect(handle.wsUrl, "Alice");
 	const wsB = await connect(handle.wsUrl, "Bob");

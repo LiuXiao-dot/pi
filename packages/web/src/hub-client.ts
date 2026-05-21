@@ -41,6 +41,7 @@ export class HubClient {
 	private roomId: string;
 	private readonly token: string;
 	private readonly displayName: string;
+	private joined = false;
 
 	constructor(hubUrl: string, roomId: string, token: string, displayName: string) {
 		this.hubUrl = hubUrl;
@@ -51,6 +52,10 @@ export class HubClient {
 
 	getRoomId(): string {
 		return this.roomId;
+	}
+
+	isJoined(): boolean {
+		return this.joined;
 	}
 
 	onMessage(handler: MessageHandler): () => void {
@@ -99,15 +104,52 @@ export class HubClient {
 	}
 
 	reconnect(roomId: string): Promise<void> {
-		this.roomId = roomId;
-		if (this.ws?.readyState === WebSocket.OPEN) {
-			return this.join(roomId);
+		return this.switchRoom(roomId);
+	}
+
+	leave(): Promise<void> {
+		if (!this.joined) {
+			return Promise.resolve();
 		}
-		return this.connect();
+		return new Promise((resolve, reject) => {
+			const timeoutId = setTimeout(() => {
+				reject(new Error("Leave timed out"));
+			}, 30_000);
+
+			const unsub = this.onMessage((msg) => {
+				if (msg.type === "left") {
+					clearTimeout(timeoutId);
+					unsub();
+					this.joined = false;
+					resolve();
+				}
+				if (msg.type === "error" && msg.code === "not_joined") {
+					clearTimeout(timeoutId);
+					unsub();
+					this.joined = false;
+					resolve();
+				}
+			});
+
+			this.send({ type: "leave" });
+		});
+	}
+
+	async switchRoom(roomId: string): Promise<void> {
+		if (this.joined) {
+			await this.leave();
+		}
+		if (this.ws?.readyState !== WebSocket.OPEN) {
+			await this.openSocket();
+		}
+		await this.join(roomId);
 	}
 
 	join(roomId: string): Promise<void> {
 		this.roomId = roomId;
+		if (this.joined) {
+			return Promise.reject(new Error("Already joined; call leave() first"));
+		}
 		return new Promise((resolve, reject) => {
 			const timeoutId = setTimeout(() => {
 				reject(new Error("Join timed out"));
@@ -117,9 +159,13 @@ export class HubClient {
 				if (msg.type === "joined") {
 					clearTimeout(timeoutId);
 					unsub();
+					this.joined = true;
 					resolve();
 				}
-				if (msg.type === "error" && (msg.code === "join_failed" || msg.code === "room_not_found")) {
+				if (
+					msg.type === "error" &&
+					(msg.code === "join_failed" || msg.code === "room_not_found" || msg.code === "already_joined")
+				) {
 					clearTimeout(timeoutId);
 					unsub();
 					reject(new Error(String(msg.message ?? msg.code)));
@@ -335,6 +381,7 @@ export class HubClient {
 	}
 
 	disconnect(): void {
+		this.joined = false;
 		this.ws?.close();
 		this.ws = null;
 	}

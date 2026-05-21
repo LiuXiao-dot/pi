@@ -21,7 +21,7 @@
 | **角色库** | 全局 `.pi/roles/`（Web「Role library」），与房间无关。 |
 | **房间角色** | 每房间 `config.json` 的 `roleNames` 从角色库勾选添加，不可重复；编排仅使用已选角色（须含 PM 与至少一个 worker）。 |
 | **房间配置** | 每房间可选 skills、rules、`rolesEnabled`；`roleOverrides` 仅对已选角色生效。 |
-| **静态 Web UI** | HTTP 服务（默认 `3141`）托管内置前端，含房间侧栏与角色编辑器。 |
+| **静态 Web UI** | HTTP 服务（默认 `3141`）：登录 → 房间列表（类似会话列表）→ 进入房间聊天；房间内可返回列表切换房间。 |
 
 ### 架构要点
 

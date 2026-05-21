@@ -82,6 +82,11 @@ export class WsHub {
 			return;
 		}
 
+		if (parsed.type === "leave") {
+			this.handleLeave(ws);
+			return;
+		}
+
 		const room = (ws as WebSocket & { __piRoom?: Room }).__piRoom;
 		const client = (ws as WebSocket & { __piClient?: { id: string; displayName: string } }).__piClient;
 		if (!room || !client) {
@@ -123,17 +128,25 @@ export class WsHub {
 			const room = await this.options.roomManager.getOrCreateRoom(roomId);
 			const client = room.addClient(ws, message.displayName);
 
-			(ws as WebSocket & { __piRoom?: Room }).__piRoom = room;
-			(ws as WebSocket & { __piClient?: { id: string; displayName: string } }).__piClient = {
+			const tagged = ws as WebSocket & {
+				__piRoom?: Room;
+				__piClient?: { id: string; displayName: string };
+				__piOnClose?: () => void;
+			};
+			tagged.__piOnClose?.();
+			const onClose = () => {
+				room.removeClient(client.id);
+			};
+			tagged.__piOnClose = onClose;
+			tagged.__piRoom = room;
+			tagged.__piClient = {
 				id: client.id,
 				displayName: client.displayName,
 			};
 
 			room.sendJoined(client);
 
-			ws.on("close", () => {
-				room.removeClient(client.id);
-			});
+			ws.on("close", onClose);
 		} catch (err) {
 			const code = err instanceof RoomRegistryError ? err.code : "join_failed";
 			const messageText = err instanceof Error ? err.message : String(err);
@@ -145,6 +158,26 @@ export class WsHub {
 			});
 			ws.close(1011, "join failed");
 		}
+	}
+
+	private handleLeave(ws: WebSocket): void {
+		const tagged = ws as WebSocket & {
+			__piRoom?: Room;
+			__piClient?: { id: string; displayName: string };
+			__piOnClose?: () => void;
+		};
+		const room = tagged.__piRoom;
+		const clientMeta = tagged.__piClient;
+		if (!room || !clientMeta) {
+			this.send(ws, { type: "error", code: "not_joined", message: "Not in a room" });
+			return;
+		}
+		const roomId = room.roomId;
+		room.removeClient(clientMeta.id);
+		tagged.__piOnClose = undefined;
+		delete tagged.__piRoom;
+		delete tagged.__piClient;
+		this.send(ws, { type: "left", roomId });
 	}
 
 	private send(ws: WebSocket, message: object): void {

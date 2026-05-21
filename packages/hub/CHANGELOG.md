@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Web UI sign-in no longer requires a room id; after login, a room list (create / delete / enter) is shown before joining chat.
 - PM task prompts include a per-room worker roster (Who / Can do / When) from role frontmatter (`who`, `can`, `when`); PM is instructed it only sees roles assigned to the room, not the global library.
 - Multi-role orchestration no longer uses every discovered role; only names in the room `roleNames` list run (empty list disables orchestration until roles are added).
 
@@ -14,6 +15,7 @@
 
 ### Added
 
+- WebSocket `leave` command and `left` event so clients can return to the room list or switch rooms on the same connection.
 - Room `roleNames` list: assign roles from the global library per room (no duplicates); `add_room_role`, `remove_room_role`, `set_room_roles` commands.
 - Web UI "Room roles" panel separate from "Role library"; orchestration uses only assigned roles (PM must be added to the room).
 

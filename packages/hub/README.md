@@ -203,7 +203,7 @@ Per-room `config.json` fields: `roleNames` (assigned roles from the global libra
 
 Hub-scoped commands (require `token`, no join): `list_rooms`, `create_room`, `delete_room`, `get_room_config`, `set_room_config`, `add_room_role`, `remove_room_role`, `set_room_roles`, `list_roles`, `get_role`, `save_role`, `delete_role`.
 
-The Web UI includes room list/create/delete, room config, and role markdown editing.
+The Web UI flow: **sign in** (hub URL, token, display name) → **room list** (create, delete, enter) → **chat** per room. Use **Rooms** in the header to leave and pick another room. Room config and role editing are in the chat sidebar.
 
 ## Protocol
 
@@ -211,12 +211,16 @@ WebSocket path: `/ws`
 
 **Hub-scoped (token only):** `list_rooms`, `create_room`, `delete_room`, `get_room_config`, `set_room_config`, `add_room_role`, `remove_room_role`, `set_room_roles`, `list_roles`, `get_role`, `save_role`, `delete_role`.
 
-**After `join`:**
+**Room membership:**
 
-1. Client sends `join` with `roomId`, `token`, `displayName` (room must exist in the registry).
+1. Client may send `join` with `roomId`, `token`, `displayName` (room must exist in the registry).
 2. Hub replies with `joined` and broadcasts `presence`.
-3. Clients send `prompt`, `steer`, or `follow_up`. Hub enqueues and runs one at a time.
-4. Hub broadcasts `agent_event` (with `hostDisplayName` for the current queue turn) and `activity_update` (`idle`, `replying`, `thinking`, `tool`, `compacting`) for session activity.
-5. Blocking extension UI is routed to the client that owns the current queue turn.
-6. `get_available_models`, `set_model`, and `set_provider_base_url` manage the shared session model and proxy base URL; successful changes broadcast `state_update`.
-7. With roles enabled: `role_plan`, `role_progress`, and `role_gap` report orchestration state; role turns are also persisted as `hub_role_plan` / `hub_role_output` custom messages in the room session.
+3. Client may send `leave` to exit the room without closing the WebSocket; hub replies with `left` and the client can `join` another room.
+
+**After `join` (in-room commands):**
+
+1. Clients send `prompt`, `steer`, or `follow_up`. Hub enqueues and runs one at a time.
+2. Hub broadcasts `agent_event` (with `hostDisplayName` for the current queue turn) and `activity_update` (`idle`, `replying`, `thinking`, `tool`, `compacting`) for session activity.
+3. Blocking extension UI is routed to the client that owns the current queue turn.
+4. `get_available_models`, `set_model`, and `set_provider_base_url` manage the shared session model and proxy base URL; successful changes broadcast `state_update`.
+5. With roles enabled: `role_plan`, `role_progress`, and `role_gap` report orchestration state; role turns are also persisted as `hub_role_plan` / `hub_role_output` custom messages in the room session.

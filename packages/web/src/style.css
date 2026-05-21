@@ -273,6 +273,142 @@ select:focus {
 	transform: translateY(0);
 }
 
+/* Room lobby */
+
+.lobby-shell {
+	display: flex;
+	flex-direction: column;
+	min-height: 100vh;
+	max-width: 560px;
+	margin: 0 auto;
+	padding: 1.25rem 1.25rem 2rem;
+	animation: fade-in var(--duration-normal) var(--ease-out) both;
+}
+
+.lobby-header {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	padding: 0.5rem 0 1.25rem;
+	border-bottom: 1px solid var(--border-strong);
+	margin-bottom: 1rem;
+}
+
+.lobby-title {
+	margin: 0;
+	flex: 1;
+	font-family: var(--font-display);
+	font-size: 1.5rem;
+	font-weight: 300;
+	letter-spacing: -0.03em;
+	color: var(--text);
+}
+
+.lobby-user {
+	font-family: var(--mono);
+	font-size: 0.65rem;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--muted);
+}
+
+.lobby-create-row {
+	display: flex;
+	gap: 0.5rem;
+	margin-bottom: 1rem;
+}
+
+.lobby-create-row input {
+	flex: 1;
+	padding: 0.6rem 0.85rem;
+}
+
+.room-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	flex: 1;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 0.35rem;
+}
+
+.room-list-empty {
+	padding: 1.5rem 0.5rem;
+	color: var(--muted);
+	font-size: 0.875rem;
+	text-align: center;
+}
+
+.room-list li {
+	display: flex;
+	align-items: stretch;
+	gap: 0.35rem;
+	animation: fade-up var(--duration-normal) var(--ease-out) both;
+}
+
+.room-row {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 0.25rem;
+	text-align: left;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-card);
+	background: var(--surface-raised);
+	padding: 0.85rem 1rem;
+	cursor: pointer;
+	font: inherit;
+	color: var(--text);
+	transition:
+		border-color var(--duration-fast),
+		background var(--duration-fast),
+		transform var(--duration-fast) var(--ease-out);
+}
+
+.room-row:hover {
+	border-color: rgba(255, 255, 255, 0.22);
+	background: rgba(255, 255, 255, 0.04);
+	transform: translateY(-1px);
+}
+
+.room-row.active {
+	border-left: 2px solid var(--accent);
+	background: rgba(255, 255, 255, 0.06);
+}
+
+.room-row-title {
+	font-size: 0.95rem;
+	font-weight: 500;
+	letter-spacing: -0.02em;
+}
+
+.room-card-meta {
+	font-family: var(--mono);
+	font-size: 0.65rem;
+	letter-spacing: 0.06em;
+	color: var(--muted);
+}
+
+.room-row-actions {
+	display: flex;
+	align-items: center;
+	flex-shrink: 0;
+}
+
+.room-row-actions .secondary-btn {
+	font-size: 0.75rem;
+	padding: 0.4rem 0.65rem;
+}
+
+.header-rooms-btn {
+	margin-right: 0.25rem;
+	font-size: 0.75rem;
+	padding: 0.4rem 0.75rem;
+}
+
 /* Chat layout */
 
 .chat-layout {
