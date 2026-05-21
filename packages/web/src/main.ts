@@ -147,13 +147,17 @@ const USER_AVATAR = "U";
 const ASSISTANT_AVATAR = "π";
 
 function renderLogin(root: HTMLElement): void {
+	hideLoadingScreen();
 	const stored = loadStored();
 	root.innerHTML = "";
 	const shell = el("div", "connect-shell");
 
 	const hero = el("div", "connect-hero");
+	const logoWrapper = el("div", "logo-wrapper");
+	const logoRing = el("div", "logo-ring");
 	const logoSymbol = Object.assign(el("div", "logo-symbol"), { textContent: "π" });
-	hero.appendChild(logoSymbol);
+	logoWrapper.append(logoRing, logoSymbol);
+	hero.appendChild(logoWrapper);
 	hero.appendChild(Object.assign(el("p", "eyebrow"), { textContent: "LAN workspace" }));
 	hero.appendChild(Object.assign(el("h1"), { textContent: "pi Hub" }));
 	shell.appendChild(hero);
@@ -230,6 +234,15 @@ function renderLogin(root: HTMLElement): void {
 	root.appendChild(shell);
 }
 
+function hideLoadingScreen(): void {
+	const ls = document.getElementById("loading-screen");
+	if (ls) {
+		ls.style.opacity = "0";
+		ls.style.transition = "opacity 200ms ease";
+		setTimeout(() => ls.remove(), 250);
+	}
+}
+
 function renderWorkspace(
 	root: HTMLElement,
 	session: StoredSession,
@@ -237,8 +250,13 @@ function renderWorkspace(
 	initialRoomId: string | undefined,
 	onSignOut: () => void,
 ): void {
+	hideLoadingScreen();
 	root.innerHTML = "";
 	const shell = el("div", "workspace-shell");
+
+	// Gradient accent bar at top
+	const accentBar = el("div", "accent-bar");
+	shell.appendChild(accentBar);
 
 	const topHeader = el("header", "workspace-header");
 	const brand = el("span", "workspace-brand");
@@ -2321,7 +2339,15 @@ function signOut(client: HubClient): void {
 function renderConnecting(root: HTMLElement): void {
 	root.innerHTML = "";
 	const shell = el("div", "connect-shell");
-	shell.appendChild(Object.assign(el("p", "hint"), { textContent: "Connecting…" }));
+	const logoWrapper = el("div", "logo-wrapper");
+	const logoRing = el("div", "logo-ring");
+	const logoSymbol = Object.assign(el("div", "logo-symbol"), { textContent: "π" });
+	logoSymbol.style.animation = "pulse-dot 1.5s ease-in-out infinite";
+	logoWrapper.append(logoRing, logoSymbol);
+	shell.appendChild(logoWrapper);
+	shell.appendChild(
+		Object.assign(el("p", "hint"), { textContent: "Connecting…", style: "position:relative;z-index:1" }),
+	);
 	root.appendChild(shell);
 }
 

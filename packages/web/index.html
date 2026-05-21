@@ -3,8 +3,8 @@
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<meta name="color-scheme" content="light" />
-		<meta name="theme-color" content="#ffffff" />
+		<meta name="color-scheme" content="dark" />
+		<meta name="theme-color" content="#0d1525" />
 		<title>pi Hub</title>
 		<link rel="preconnect" href="https://fonts.googleapis.com" />
 		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -15,6 +15,16 @@
 		<link rel="stylesheet" href="/src/style.css" />
 	</head>
 	<body>
+		<!-- Loading Screen (shown initially, replaced on app mount) -->
+		<div id="loading-screen" class="loading-screen">
+			<div class="loading-logo">
+				<div class="loading-logo-inner">&pi;</div>
+			</div>
+			<div class="loading-bar-track">
+				<div class="loading-bar-fill"></div>
+			</div>
+			<div class="loading-text">Loading pi Hub</div>
+		</div>
 		<div id="app"></div>
 		<script type="module" src="/src/main.ts"></script>
 	</body>
