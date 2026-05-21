@@ -8,6 +8,27 @@ import type {
 
 export type MessageHandler = (msg: HubServerMessage) => void;
 
+/**
+ * Generate a UUID v4. Falls back to `crypto.getRandomValues` when
+ * `crypto.randomUUID` is unavailable (non-secure contexts, e.g. plain HTTP
+ * on a LAN IP).
+ */
+function uuidV4(): string {
+	const c = globalThis.crypto as Crypto | undefined;
+	if (c && typeof c.randomUUID === "function") return c.randomUUID();
+	const bytes = new Uint8Array(16);
+	if (c && typeof c.getRandomValues === "function") {
+		c.getRandomValues(bytes);
+	} else {
+		for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+	}
+	bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+	bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+	const hex: string[] = [];
+	for (let i = 0; i < 16; i++) hex.push(bytes[i]!.toString(16).padStart(2, "0"));
+	return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10, 16).join("")}`;
+}
+
 type CommandResolver = {
 	resolve: (data: unknown) => void;
 	reject: (error: Error) => void;
@@ -135,7 +156,7 @@ export class HubClient {
 	}
 
 	private sendCommand<T>(message: HubClientMessage, timeoutMs = 30_000): Promise<T> {
-		const id = crypto.randomUUID();
+		const id = uuidV4();
 		return new Promise<T>((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.pendingCommands.delete(id);
