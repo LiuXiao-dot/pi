@@ -408,34 +408,44 @@ function renderWorkspace(
 				}
 			}
 
-			// Use pointer events — they fire for both touch and mouse.
-			// pointermove/up are on document so dragging works even outside the element.
+			// Swipe via pointer events; only capture when actual movement detected.
+			let pointerId = -1;
+
 			function onPointerDown(e: PointerEvent): void {
 				startX = e.clientX;
 				currentX = startX;
-				isDragging = true;
-				swipeWrap.setPointerCapture(e.pointerId);
+				isDragging = false;
+				pointerId = e.pointerId;
 			}
 
 			function onPointerMove(e: PointerEvent): void {
-				if (!isDragging) return;
+				if (pointerId < 0) return;
+				const dx = e.clientX - startX;
+				if (!isDragging) {
+					if (Math.abs(dx) < 8) return;
+					isDragging = true;
+					swipeWrap.setPointerCapture(pointerId);
+				}
 				currentX = e.clientX;
-				const dx = currentX - startX;
 				updateSwipe(dx);
 			}
 
 			function onPointerUp(e: PointerEvent): void {
-				if (!isDragging) return;
+				if (pointerId < 0) return;
+				const wasDragging = isDragging;
+				pointerId = -1;
 				isDragging = false;
-				const dx = currentX - startX;
-				commitSwipe(dx);
+				if (wasDragging) {
+					const dx = currentX - startX;
+					commitSwipe(dx);
+					try {
+						swipeWrap.releasePointerCapture(e.pointerId);
+					} catch {
+						/* ignore */
+					}
+				}
 				startX = 0;
 				currentX = 0;
-				try {
-					swipeWrap.releasePointerCapture(e.pointerId);
-				} catch {
-					/* ignore */
-				}
 			}
 
 			swipeWrap.addEventListener("pointerdown", onPointerDown);
@@ -596,6 +606,36 @@ function renderWorkspace(
 
 	const activityBar = el("div", "activity-bar hidden");
 	panel.appendChild(activityBar);
+
+	// Token stats bar
+	const tokenBar = el("div", "token-bar");
+	const tokenInput = el("span", "token-stat");
+	tokenInput.textContent = "Input: 0";
+	const tokenOutput = el("span", "token-stat");
+	tokenOutput.textContent = "Output: 0";
+	const tokenTotal = el("span", "token-stat");
+	tokenTotal.textContent = "Total: 0";
+	tokenBar.append(tokenInput, tokenOutput, tokenTotal);
+	panel.appendChild(tokenBar);
+
+	/** Calculate token totals from a list of session messages. */
+	function updateTokenStats(msgs: unknown[]): void {
+		let input = 0;
+		let output = 0;
+		for (const m of msgs) {
+			if (m && typeof m === "object" && (m as Record<string, unknown>).role === "assistant") {
+				const usage = (m as Record<string, unknown>).usage as Record<string, number> | undefined;
+				if (usage) {
+					input += usage.input ?? 0;
+					output += usage.output ?? 0;
+				}
+			}
+		}
+		const total = input + output;
+		tokenInput.textContent = `Input: ${input.toLocaleString()}`;
+		tokenOutput.textContent = `Output: ${output.toLocaleString()}`;
+		tokenTotal.textContent = `Total: ${total.toLocaleString()}`;
+	}
 
 	const queueBar = el("div", "queue-bar");
 	queueBar.textContent = "Queue empty";
@@ -852,7 +892,10 @@ function renderWorkspace(
 						.split(",")
 						.map((s) => s.trim())
 						.filter(Boolean);
+					// Fetch current config to preserve roleNames (added/removed via add_room_role)
+					const currentConfig = await client.getRoomConfig(selectedRoomId!);
 					await client.setRoomConfig(selectedRoomId!, {
+						roleNames: currentConfig.roleNames,
 						skills: skills.length > 0 ? skills : undefined,
 						rules: rulesClone.value.trim() || undefined,
 						rolesEnabled: rolesCb.checked ? true : undefined,
@@ -1071,6 +1114,10 @@ function renderWorkspace(
 	}
 
 	let streamingAssistantEl: HTMLElement | null = null;
+	let toolMsgMap: Map<
+		string,
+		{ div: HTMLElement; detailWrap: HTMLElement; argsPre: HTMLElement; toolName: string; args: unknown }
+	> | null = null;
 	let turnHostName: string | null = null;
 	let clientId = "";
 	let presenceCount = 0;
@@ -1457,12 +1504,71 @@ function renderWorkspace(
 		}
 		if (event.type === "agent_end" && Array.isArray(event.messages)) {
 			renderHistory(event.messages);
+			updateTokenStats(event.messages);
 			setStreamingVisual(false);
 		}
+
 		if (event.type === "tool_execution_start") {
+			const toolCallId = (event as Record<string, unknown>).toolCallId as string;
+			const toolName = (event as Record<string, unknown>).toolName as string;
+			const args = (event as Record<string, unknown>).args;
 			const host = hostDisplayName ?? turnHostName;
-			const prefix = host ? `${host} · ` : "";
-			appendMessage("tool", `${prefix}Tool: ${event.toolName ?? "unknown"}`);
+
+			const div = el("div", "msg tool tool-collapsible");
+			const headerLine = el("div", "tool-header");
+			const indicator = el("span", "tool-toggle");
+			indicator.textContent = "▶";
+			const nameSpan = el("span", "tool-name");
+			const hostPrefix = host ? `${host} · ` : "";
+			nameSpan.textContent = `${hostPrefix}${toolName}`;
+			headerLine.append(indicator, nameSpan);
+			div.appendChild(headerLine);
+
+			const detailWrap = el("div", "tool-detail hidden");
+			const argsPre = el("pre", "tool-code");
+			argsPre.textContent = args ? JSON.stringify(args, null, 2) : "(no arguments)";
+			detailWrap.appendChild(argsPre);
+			div.appendChild(detailWrap);
+
+			let expanded = false;
+			div.addEventListener("click", () => {
+				expanded = !expanded;
+				detailWrap.classList.toggle("hidden", !expanded);
+				indicator.textContent = expanded ? "▼" : "▶";
+			});
+
+			messages.appendChild(div);
+			messages.scrollTop = messages.scrollHeight;
+
+			if (toolCallId) {
+				toolMsgMap.set(toolCallId, { div, detailWrap, argsPre, toolName, args });
+			}
+		}
+		if (
+			event.type === "tool_execution_update" &&
+			toolMsgMap.has((event as Record<string, unknown>).toolCallId as string)
+		) {
+			const entry = toolMsgMap.get((event as Record<string, unknown>).toolCallId as string)!;
+			const partialResult = (event as Record<string, unknown>).partialResult;
+			if (partialResult !== undefined) {
+				entry.argsPre.textContent += `\n→ ${String(partialResult).slice(0, 500)}`;
+			}
+		}
+		if (
+			event.type === "tool_execution_end" &&
+			toolMsgMap.has((event as Record<string, unknown>).toolCallId as string)
+		) {
+			const entry = toolMsgMap.get((event as Record<string, unknown>).toolCallId as string)!;
+			const result = (event as Record<string, unknown>).result;
+			const isError = (event as Record<string, unknown>).isError as boolean;
+			if (result !== undefined) {
+				entry.argsPre.textContent = `→ Result: ${JSON.stringify(result, null, 2)}`;
+				if (isError) {
+					entry.div.classList.add("tool-error");
+				}
+			} else {
+				entry.argsPre.textContent = "→ (no result)";
+			}
 		}
 	}
 
@@ -1606,7 +1712,11 @@ function renderWorkspace(
 		activityBar.classList.add("hidden");
 		activityBar.textContent = "";
 		queueBar.textContent = "Queue empty";
+		tokenInput.textContent = "Input: 0";
+		tokenOutput.textContent = "Output: 0";
+		tokenTotal.textContent = "Total: 0";
 		streamingAssistantEl = null;
+		toolMsgMap = null;
 		setStreamingVisual(false);
 	}
 
@@ -1688,7 +1798,9 @@ function renderWorkspace(
 			setConnectionLive(true);
 			clientId = (msg.clientId as string) ?? "";
 			applyStateModel(msg.state as HubSessionState | undefined);
-			renderHistory((msg.messages as unknown[]) ?? []);
+			const historyMsgs = (msg.messages as unknown[]) ?? [];
+			renderHistory(historyMsgs);
+			updateTokenStats(historyMsgs);
 			void loadRoomConfigUi(joinedRoomId).catch((e) => showError(e instanceof Error ? e.message : String(e)));
 			void refreshModelList(
 				(msg.state as HubSessionState | undefined)?.model?.provider && (msg.state as HubSessionState).model?.id

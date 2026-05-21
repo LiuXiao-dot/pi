@@ -1188,8 +1188,61 @@ select {
   font-size: 0.75rem;
   letter-spacing: 0.02em;
   color: var(--muted);
-  padding: 0.7rem 0.9rem;
+  padding: 0.5rem 0.75rem;
   border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color var(--duration-fast), background var(--duration-fast);
+}
+
+.msg.tool:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-subtle);
+}
+
+.msg.tool.tool-error {
+  border-left: 2px solid var(--error);
+}
+
+.msg.tool .tool-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.msg.tool .tool-toggle {
+  flex-shrink: 0;
+  font-size: 0.5rem;
+  color: var(--muted);
+  transition: transform var(--duration-fast) ease;
+  line-height: 1;
+}
+
+.msg.tool .tool-name {
+  flex: 1;
+  font-size: 0.75rem;
+  color: var(--text-body);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msg.tool .tool-detail {
+  margin-top: 0.4rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--border);
+  animation: fade-in var(--duration-fast) ease both;
+}
+
+.msg.tool .tool-code {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  line-height: 1.5;
+  color: var(--text-body);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 .msg.role-plan,
@@ -1307,6 +1360,28 @@ select {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted);
+}
+
+/* === Token Stats === */
+
+.token-bar {
+  display: flex;
+  gap: 1rem;
+  padding: 0.3rem 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.token-stat {
+  white-space: nowrap;
+}
+
+.token-stat:first-child {
+  margin-right: auto;
 }
 
 /* =================================

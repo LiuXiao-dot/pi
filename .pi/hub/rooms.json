@@ -4,8 +4,8 @@
       "roomId": "default",
       "title": "Default",
       "createdAt": "2026-05-21T14:43:52.180Z",
-      "updatedAt": "2026-05-21T15:43:57.204Z",
-      "sessionFile": ".pi/hub/rooms/default/2026-05-21T15-43-57-204Z_019e4b35-2f14-7407-967e-cf3fd5cdf711.jsonl"
+      "updatedAt": "2026-05-21T16:41:50.337Z",
+      "sessionFile": ".pi/hub/rooms/default/2026-05-21T16-41-50-336Z_019e4b6a-2e00-7a91-8579-190b297445ab.jsonl"
     },
     {
       "roomId": "pi-hub美化",
@@ -22,7 +22,7 @@
     {
       "roomId": "pi-hub策划",
       "createdAt": "2026-05-21T15:47:50.522Z",
-      "updatedAt": "2026-05-21T15:56:58.443Z",
+      "updatedAt": "2026-05-21T16:42:26.210Z",
       "sessionFile": ".pi/hub/rooms/pi-hub策划/2026-05-21T15-47-50-528Z_019e4b38-be80-76f0-b169-b58ba7461138.jsonl"
     }
   ]
