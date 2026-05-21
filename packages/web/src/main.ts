@@ -782,4 +782,19 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 }
 
 const app = document.getElementById("app")!;
-renderConnect(app, (cfg) => renderChat(app, cfg));
+
+function tryAutoConnect(): boolean {
+	const stored = loadStored();
+	if (!stored.token || !stored.hubUrl || !stored.roomId || !stored.displayName) return false;
+	renderChat(app, {
+		hubUrl: stored.hubUrl,
+		roomId: stored.roomId,
+		token: stored.token,
+		displayName: stored.displayName,
+	});
+	return true;
+}
+
+if (!tryAutoConnect()) {
+	renderConnect(app, (cfg) => renderChat(app, cfg));
+}
