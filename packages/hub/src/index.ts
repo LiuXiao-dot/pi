@@ -1,6 +1,8 @@
 export { createHttpServer, defaultPublicDir } from "./http-server.ts";
 export { PromptQueue } from "./prompt-queue.ts";
 export type {
+	HubActivityPhase,
+	HubActivityUpdate,
 	HubAgentEvent,
 	HubClientMessage,
 	HubExtensionUIRequest,

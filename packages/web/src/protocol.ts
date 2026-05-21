@@ -16,6 +16,15 @@ export interface HubSessionState {
 	[key: string]: unknown;
 }
 
+export type HubActivityPhase = "idle" | "replying" | "thinking" | "tool" | "compacting";
+
+export interface HubActivityUpdateMessage extends HubServerMessage {
+	type: "activity_update";
+	hostDisplayName: string | null;
+	phase: HubActivityPhase;
+	detail?: string;
+}
+
 export type HubServerMessage = { type: string; [key: string]: unknown };
 export type HubClientMessage = { type: string; [key: string]: unknown };
 

@@ -1,5 +1,11 @@
 import { defaultWsUrl, HubClient } from "./hub-client.ts";
-import type { HubModelInfo, HubModelsConfigPayload, HubServerMessage, HubSessionState } from "./protocol.ts";
+import type {
+	HubActivityUpdateMessage,
+	HubModelInfo,
+	HubModelsConfigPayload,
+	HubServerMessage,
+	HubSessionState,
+} from "./protocol.ts";
 
 interface StoredConnect {
 	hubUrl: string;
@@ -76,8 +82,14 @@ function getMessageText(message: unknown): string {
 function renderConnect(root: HTMLElement, onConnect: (cfg: StoredConnect) => void): void {
 	const stored = loadStored();
 	root.innerHTML = "";
+	const shell = el("div", "connect-shell");
+
+	const brand = el("div", "connect-brand");
+	brand.appendChild(Object.assign(el("p", "eyebrow"), { textContent: "LAN workspace" }));
+	brand.appendChild(Object.assign(el("h1"), { textContent: "pi Hub" }));
+	shell.appendChild(brand);
+
 	const panel = el("div", "connect-panel");
-	panel.appendChild(Object.assign(el("h1"), { textContent: "pi Hub" }));
 	panel.appendChild(
 		Object.assign(el("p", "hint"), {
 			textContent:
@@ -95,7 +107,9 @@ function renderConnect(root: HTMLElement, onConnect: (cfg: StoredConnect) => voi
 	const inputs: Record<string, HTMLInputElement> = {};
 	for (const f of fields) {
 		const label = el("label");
-		label.textContent = f.label;
+		const span = el("span");
+		span.textContent = f.label;
+		label.appendChild(span);
 		const input = el("input") as HTMLInputElement;
 		if (f.type) input.type = f.type;
 		input.value =
@@ -108,7 +122,7 @@ function renderConnect(root: HTMLElement, onConnect: (cfg: StoredConnect) => voi
 	const err = el("div", "error-banner hidden");
 	panel.appendChild(err);
 
-	const btn = el("button");
+	const btn = el("button", "btn-primary");
 	btn.textContent = "Connect";
 	btn.onclick = () => {
 		const cfg: StoredConnect = {
@@ -126,7 +140,8 @@ function renderConnect(root: HTMLElement, onConnect: (cfg: StoredConnect) => voi
 		onConnect(cfg);
 	};
 	panel.appendChild(btn);
-	root.appendChild(panel);
+	shell.appendChild(panel);
+	root.appendChild(shell);
 }
 
 function renderChat(root: HTMLElement, cfg: StoredConnect): void {
@@ -134,12 +149,25 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 	const panel = el("div", "chat-panel");
 
 	const header = el("div", "header");
-	const title = el("span");
-	title.textContent = `Room: ${cfg.roomId}`;
+	const headerBrand = el("div", "header-brand");
+	const logo = el("span", "logo");
+	logo.textContent = "pi Hub";
+	const room = el("span", "room");
+	room.textContent = cfg.roomId;
+	headerBrand.append(logo, room);
+
+	const statusWrap = el("div", "status-wrap");
+	const statusDot = el("span", "status-dot connecting");
 	const status = el("span", "status");
 	status.textContent = "Connecting…";
-	header.append(title, status);
+	statusWrap.append(statusDot, status);
+	header.append(headerBrand, statusWrap);
 	panel.appendChild(header);
+
+	function setConnectionLive(live: boolean): void {
+		statusDot.classList.toggle("live", live);
+		statusDot.classList.toggle("connecting", !live);
+	}
 
 	const modelBar = el("div", "model-bar");
 	const modelRow = el("div", "model-row");
@@ -199,6 +227,9 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 	const roleProgressBar = el("div", "role-progress-bar hidden");
 	panel.appendChild(roleProgressBar);
 
+	const activityBar = el("div", "activity-bar hidden");
+	panel.appendChild(activityBar);
+
 	const queueBar = el("div", "queue-bar");
 	queueBar.textContent = "Queue empty";
 	panel.appendChild(queueBar);
@@ -206,7 +237,7 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 	const composer = el("div", "composer");
 	const input = el("textarea") as HTMLTextAreaElement;
 	input.placeholder = "Message…";
-	const sendBtn = el("button");
+	const sendBtn = el("button", "btn-send");
 	sendBtn.textContent = "Send";
 	composer.append(input, sendBtn);
 	panel.appendChild(composer);
@@ -214,10 +245,11 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 	root.appendChild(panel);
 
 	const client = new HubClient(cfg.hubUrl, cfg.roomId, cfg.token, cfg.displayName);
-	const messageEls = new Map<string, HTMLElement>();
+	let streamingAssistantEl: HTMLElement | null = null;
+	let turnHostName: string | null = null;
 	let clientId = "";
 	let presenceCount = 0;
-	let statusModelSuffix = "no model";
+	let statusModelSuffix = "loading models…";
 	let availableModels: HubModelInfo[] = [];
 	let switchingModel = false;
 
@@ -352,14 +384,49 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 		err.classList.remove("hidden");
 	}
 
+	function assistantMetaLabel(host?: string | null): string | undefined {
+		return host ?? turnHostName ?? undefined;
+	}
+
+	function formatActivityLabel(msg: HubActivityUpdateMessage): string {
+		const host = msg.hostDisplayName ?? "Host";
+		switch (msg.phase) {
+			case "thinking":
+				return `${host} is thinking…`;
+			case "tool":
+				return msg.detail ? `${host} is using tool: ${msg.detail}` : `${host} is using a tool…`;
+			case "compacting":
+				return msg.detail ? `${host} · compacting (${msg.detail})` : `${host} is compacting context…`;
+			case "replying":
+				return `${host} is replying…`;
+			default:
+				return "";
+		}
+	}
+
+	function updateActivityBar(msg: HubActivityUpdateMessage): void {
+		if (msg.hostDisplayName) {
+			turnHostName = msg.hostDisplayName;
+		}
+		const label = formatActivityLabel(msg);
+		if (msg.phase === "idle" || !label) {
+			activityBar.classList.add("hidden");
+			activityBar.textContent = "";
+			return;
+		}
+		activityBar.textContent = label;
+		activityBar.classList.remove("hidden");
+	}
+
 	function appendMessage(role: string, text: string, meta?: string): HTMLElement {
 		const div = el("div", `msg ${role}`);
-		if (meta) {
+		const label = meta ?? (role === "assistant" ? assistantMetaLabel() : undefined);
+		if (label) {
 			const m = el("div", "meta");
-			m.textContent = meta;
+			m.textContent = label;
 			div.appendChild(m);
 		}
-		const body = el("div");
+		const body = el("div", "msg-body");
 		body.textContent = text;
 		div.appendChild(body);
 		messages.appendChild(div);
@@ -369,7 +436,7 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 
 	function renderHistory(msgs: unknown[]): void {
 		messages.innerHTML = "";
-		messageEls.clear();
+		streamingAssistantEl = null;
 		for (const msg of msgs) {
 			const m = msg as { role?: string };
 			if (m.role === "user" || m.role === "assistant") {
@@ -378,10 +445,38 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 		}
 	}
 
+	function lastUserMessageText(): string | null {
+		const last = messages.querySelector(".msg.user:last-child .msg-body");
+		return last?.textContent ?? null;
+	}
+
+	function updateStreamingAssistant(message: unknown, host?: string | null): void {
+		if (!streamingAssistantEl) {
+			return;
+		}
+		const meta = streamingAssistantEl.querySelector(".meta");
+		const label = assistantMetaLabel(host);
+		if (meta) {
+			meta.textContent = label;
+		} else if (label) {
+			const m = el("div", "meta");
+			m.textContent = label;
+			streamingAssistantEl.prepend(m);
+		}
+		const body = streamingAssistantEl.querySelector(".msg-body");
+		if (body) {
+			body.textContent = getMessageText(message);
+		}
+		messages.scrollTop = messages.scrollHeight;
+	}
+
 	function updateQueue(msg: HubServerMessage): void {
 		if (msg.type !== "queue_update") return;
 		const pending = (msg.pending as unknown[]) ?? [];
 		const current = msg.current as { displayName?: string } | null;
+		if (current?.displayName) {
+			turnHostName = current.displayName;
+		}
 		if (current) {
 			queueBar.textContent = `Running: ${current.displayName ?? "?"} · ${pending.length} queued`;
 		} else if (pending.length > 0) {
@@ -450,36 +545,60 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 
 	function handleAgentEvent(msg: HubServerMessage): void {
 		if (msg.type !== "agent_event") return;
+		const hostDisplayName = (msg.hostDisplayName as string | undefined) ?? turnHostName;
+		if (hostDisplayName) {
+			turnHostName = hostDisplayName;
+		}
 		const event = msg.event as {
 			type: string;
 			message?: unknown;
+			messages?: unknown[];
 			assistantMessageEvent?: { type: string; delta?: string };
+			toolName?: string;
 		};
 		if (event.type === "message_start" && event.message) {
-			const m = event.message as { role?: string; id?: string };
-			if (m.role === "assistant" && m.id) {
-				messageEls.set(m.id, appendMessage("assistant", ""));
+			const m = event.message as { role?: string };
+			if (m.role === "assistant") {
+				streamingAssistantEl = appendMessage("assistant", "", assistantMetaLabel(hostDisplayName));
 			}
 		}
-		if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
-			const delta = event.assistantMessageEvent.delta ?? "";
-			const last = messageEls.values().next().value;
-			if (last) {
-				const body = last.querySelector("div:last-child");
-				if (body) body.textContent = (body.textContent ?? "") + delta;
-				messages.scrollTop = messages.scrollHeight;
+		if (event.type === "message_update" && event.message) {
+			const m = event.message as { role?: string };
+			if (m.role === "assistant") {
+				if (!streamingAssistantEl) {
+					streamingAssistantEl = appendMessage("assistant", "", assistantMetaLabel(hostDisplayName));
+				}
+				updateStreamingAssistant(event.message, hostDisplayName);
 			}
 		}
 		if (event.type === "message_end" && event.message) {
 			const m = event.message as { role?: string };
-			if (m.role === "user") {
-				appendMessage("user", getMessageText(m));
+			if (m.role === "assistant") {
+				if (!streamingAssistantEl) {
+					streamingAssistantEl = appendMessage("assistant", "", assistantMetaLabel(hostDisplayName));
+				}
+				updateStreamingAssistant(event.message, hostDisplayName);
+				streamingAssistantEl = null;
+			} else if (m.role === "user") {
+				const text = getMessageText(m);
+				if (text && text !== lastUserMessageText()) {
+					appendMessage("user", text);
+				}
 			}
 		}
-		if (event.type === "tool_execution_start") {
-			const t = event as { toolName?: string };
-			appendMessage("tool", `Tool: ${t.toolName ?? "unknown"}`);
+		if (event.type === "agent_end" && Array.isArray(event.messages)) {
+			renderHistory(event.messages);
 		}
+		if (event.type === "tool_execution_start") {
+			const host = hostDisplayName ?? turnHostName;
+			const prefix = host ? `${host} · ` : "";
+			appendMessage("tool", `${prefix}Tool: ${event.toolName ?? "unknown"}`);
+		}
+	}
+
+	function handleActivityUpdate(msg: HubServerMessage): void {
+		if (msg.type !== "activity_update") return;
+		updateActivityBar(msg as HubActivityUpdateMessage);
 	}
 
 	function showExtensionModal(msg: HubServerMessage): void {
@@ -601,6 +720,7 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 
 	client.onMessage((msg) => {
 		if (msg.type === "joined") {
+			setConnectionLive(true);
 			clientId = (msg.clientId as string) ?? "";
 			applyStateModel(msg.state as HubSessionState | undefined);
 			renderHistory((msg.messages as unknown[]) ?? []);
@@ -624,10 +744,12 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 			const text = (msg.message as string) ?? "Error";
 			showError(text);
 			if (msg.code === "disconnected" || msg.code === "join_failed" || msg.code === "unauthorized") {
+				setConnectionLive(false);
 				status.textContent = "Disconnected";
 			}
 		}
 		updateQueue(msg);
+		handleActivityUpdate(msg);
 		handleRoleOrchestration(msg);
 		handleAgentEvent(msg);
 		if (msg.type === "extension_ui_request") {
@@ -650,17 +772,13 @@ function renderChat(root: HTMLElement, cfg: StoredConnect): void {
 		}
 	});
 
-	client
-		.connect()
-		.then(() => {
-			statusModelSuffix = "loading models…";
-			updateHeaderStatus();
-		})
-		.catch((e) => {
-			showError(e instanceof Error ? e.message : String(e));
-			status.textContent = "Failed";
-			setTimeout(() => renderConnect(root, (c) => renderChat(root, c)), 2000);
-		});
+	updateHeaderStatus();
+	client.connect().catch((e) => {
+		setConnectionLive(false);
+		showError(e instanceof Error ? e.message : String(e));
+		status.textContent = "Failed";
+		setTimeout(() => renderConnect(root, (c) => renderChat(root, c)), 2000);
+	});
 }
 
 const app = document.getElementById("app")!;

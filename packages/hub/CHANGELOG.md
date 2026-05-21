@@ -4,6 +4,7 @@
 
 ### Added
 
+- `activity_update` WebSocket event and `hostDisplayName` on `agent_event` so clients can show which operator owns the turn and whether the agent is replying, thinking, using tools, or compacting.
 - LAN WebSocket hub (`pi-hub`) for multi-client collaborative pi coding-agent sessions with serialized prompt queue and extension UI routing.
 - Layered config: `~/.pi/hub.json`, `<cwd>/.pi/hub.json`, `PI_HUB_*` env vars, and `pi-hub init`.
 - Monorepo scripts `npm run hub`, `hub:build`, `hub:init`, and `scripts/pi-hub.ps1` for Windows.

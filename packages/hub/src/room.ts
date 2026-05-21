@@ -11,6 +11,8 @@ import {
 } from "./models-config.ts";
 import { PromptQueue } from "./prompt-queue.ts";
 import type {
+	HubActivityPhase,
+	HubActivityUpdate,
 	HubClientMessage,
 	HubCommandResult,
 	HubExtensionUIOutbound,
@@ -53,6 +55,9 @@ export class Room {
 	private unsubscribeSession: (() => void) | undefined;
 	private readonly extensionUi: ExtensionUiRouter;
 	private readonly queue: PromptQueue;
+	private activityPhase: HubActivityPhase = "idle";
+	private activityDetail: string | undefined;
+	private activityHostDisplayName: string | null = null;
 
 	constructor(options: RoomOptions) {
 		this.roomId = options.roomId;
@@ -77,9 +82,14 @@ export class Room {
 				})
 			: undefined;
 
-		this.queue = new PromptQueue(this.session, (update) => this.broadcast(update), {
-			roleOrchestrator,
-		});
+		this.queue = new PromptQueue(
+			this.session,
+			(update) => {
+				this.broadcast(update);
+				this.syncActivityFromQueue();
+			},
+			{ roleOrchestrator },
+		);
 	}
 
 	private broadcastRoleEvent(message: HubRolePlan | HubRoleGap | HubRoleProgress): void {
@@ -403,11 +413,73 @@ export class Room {
 			if (event.type === "agent_end") {
 				this.queue.notifyAgentIdle();
 			}
-			this.broadcast({ type: "agent_event", event });
+			this.updateActivityFromEvent(event);
+			const hostDisplayName = this.queue.getTurnOriginDisplayName() ?? undefined;
+			this.broadcast({ type: "agent_event", event, hostDisplayName });
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			console.error(`[pi-hub] session event error: ${message}`);
 		}
+	}
+
+	private syncActivityFromQueue(): void {
+		if (this.queue.getTurnOriginDisplayName() === null && !this.session.isStreaming && !this.session.isCompacting) {
+			this.setActivity("idle");
+		}
+	}
+
+	private updateActivityFromEvent(event: AgentSessionEvent): void {
+		switch (event.type) {
+			case "agent_start":
+			case "turn_start":
+				this.setActivity("replying");
+				return;
+			case "message_update": {
+				const sub = event.assistantMessageEvent?.type;
+				if (sub === "thinking_delta") {
+					this.setActivity("thinking");
+				} else if (sub === "text_delta") {
+					this.setActivity("replying");
+				}
+				return;
+			}
+			case "tool_execution_start":
+				this.setActivity("tool", event.toolName);
+				return;
+			case "tool_execution_end":
+				this.setActivity(this.session.isStreaming ? "replying" : "idle");
+				return;
+			case "compaction_start":
+				this.setActivity("compacting", event.reason);
+				return;
+			case "compaction_end":
+				this.setActivity(this.session.isStreaming ? "replying" : "idle");
+				return;
+			case "agent_end":
+				this.setActivity(this.session.isStreaming ? "replying" : "idle");
+				return;
+		}
+	}
+
+	private setActivity(phase: HubActivityPhase, detail?: string): void {
+		const hostDisplayName = this.queue.getTurnOriginDisplayName();
+		if (
+			this.activityPhase === phase &&
+			this.activityDetail === detail &&
+			this.activityHostDisplayName === hostDisplayName
+		) {
+			return;
+		}
+		this.activityPhase = phase;
+		this.activityDetail = detail;
+		this.activityHostDisplayName = hostDisplayName;
+		const update: HubActivityUpdate = {
+			type: "activity_update",
+			hostDisplayName,
+			phase,
+			detail,
+		};
+		this.broadcast(update);
 	}
 
 	private broadcastExtensionUi(request: HubExtensionUIRequest, targetClientId: string | null): void {

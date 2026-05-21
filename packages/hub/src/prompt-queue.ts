@@ -42,6 +42,10 @@ export class PromptQueue {
 		return this.turnOriginClientId;
 	}
 
+	getTurnOriginDisplayName(): string | null {
+		return this.current?.displayName ?? null;
+	}
+
 	enqueue(item: Omit<QueueItem, "id" | "queuedAt"> & { id?: string }): {
 		accepted: boolean;
 		position: number;

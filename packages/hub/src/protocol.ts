@@ -112,9 +112,21 @@ export interface HubJoined {
 	messages: unknown[];
 }
 
+export type HubActivityPhase = "idle" | "replying" | "thinking" | "tool" | "compacting";
+
+export interface HubActivityUpdate {
+	type: "activity_update";
+	hostDisplayName: string | null;
+	phase: HubActivityPhase;
+	/** Tool name during `tool`, compaction reason during `compacting`, etc. */
+	detail?: string;
+}
+
 export interface HubAgentEvent {
 	type: "agent_event";
 	event: AgentSessionEvent;
+	/** Display name of the client that owns the current queue turn. */
+	hostDisplayName?: string;
 }
 
 export interface HubModelInfoPayload {
@@ -209,6 +221,7 @@ export type HubExtensionUIOutbound = HubExtensionUIRequest & {
 export type HubServerMessage =
 	| HubJoined
 	| HubAgentEvent
+	| HubActivityUpdate
 	| HubQueueUpdate
 	| HubPresenceUpdate
 	| HubCommandResult

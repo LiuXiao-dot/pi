@@ -195,7 +195,7 @@ WebSocket path: `/ws`
 1. Client sends `join` with `roomId`, `token`, `displayName`.
 2. Hub replies with `joined` and broadcasts `presence`.
 3. Clients send `prompt`, `steer`, or `follow_up`. Hub enqueues and runs one at a time.
-4. Hub broadcasts `agent_event` for session activity.
+4. Hub broadcasts `agent_event` (with `hostDisplayName` for the current queue turn) and `activity_update` (`idle`, `replying`, `thinking`, `tool`, `compacting`) for session activity.
 5. Blocking extension UI is routed to the client that owns the current queue turn.
 6. `get_available_models`, `set_model`, and `set_provider_base_url` manage the shared session model and proxy base URL; successful changes broadcast `state_update`.
 7. With roles enabled: `role_plan`, `role_progress`, and `role_gap` report orchestration state.
