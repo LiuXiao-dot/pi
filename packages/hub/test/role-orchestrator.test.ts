@@ -115,7 +115,7 @@ Build.`,
 		});
 
 		expect(orchestrator.isReady()).toBe(true);
-		await orchestrator.run("build feature X");
+		await orchestrator.run("@pm build feature X", undefined, { mentionedRoles: ["pm"] });
 
 		expect(broadcasts.some((b) => b.type === "role_plan")).toBe(true);
 		expect(broadcasts.some((b) => b.type === "role_gap")).toBe(true);
@@ -171,7 +171,7 @@ Build.`,
 			runRole,
 		});
 
-		await orchestrator.run("test");
+		await orchestrator.run("@pm test", undefined, { mentionedRoles: ["pm"] });
 		const gap = gaps.find((g) => g.uncovered.some((u) => u.reason.includes("unknown")));
 		expect(gap).toBeDefined();
 		expect(runRole).toHaveBeenCalledTimes(1);
@@ -242,8 +242,41 @@ Build.`,
 		});
 
 		expect(orchestrator.isReady()).toBe(false);
-		await orchestrator.run("test");
+	});
+
+	it("runs only @mentioned worker roles in direct mode", async () => {
+		const runRole = vi.fn(async (opts: { role: RoleConfig }): Promise<RunRoleResult> => {
+			return { exitCode: 0, output: `done-${opts.role.name}`, stderr: "" };
+		});
+
+		const registry = new RoomRegistry(tempDir);
+		registry.createRoom("test");
+
+		const session = {
+			messages: [] as unknown[],
+			sessionManager: {
+				appendMessage: vi.fn(),
+				buildSessionContext: vi.fn(() => ({ messages: [] })),
+			},
+			agent: { state: { messages: [] } },
+			prompt: vi.fn(async () => {}),
+			sendCustomMessage: vi.fn(async () => {}),
+		};
+
+		const orchestrator = new RoleOrchestrator({
+			session: session as never,
+			cwd: tempDir,
+			roomId: "test",
+			registry,
+			rolesConfig: resolveRolesConfig({ enabled: true, rolesDir: ".pi/roles", pmRole: "pm" }),
+			getRoomConfig: () => ({ roleNames: ["pm", "dev"] }),
+			getRoleModelOverrides: () => ({}),
+			onBroadcast: () => {},
+			runRole,
+		});
+
+		await orchestrator.run("@dev implement UI", undefined, { mentionedRoles: ["dev"] });
 		expect(runRole).toHaveBeenCalledTimes(1);
-		expect(runRole.mock.calls[0]?.[0].role.name).toBe("pm");
+		expect(runRole.mock.calls[0]?.[0].role.name).toBe("dev");
 	});
 });

@@ -40,19 +40,54 @@ function getFinalAssistantText(messages: Message[]): string {
 }
 
 function getPiInvocation(args: string[]): { command: string; args: string[] } {
+	// 1. Environment variable override
+	const envPi = process.env.PI_COMMAND;
+	if (envPi) {
+		return { command: envPi, args };
+	}
+
+	// 2. Look for the pi CLI relative to the monorepo root
+	const monorepoRoot = findMonorepoRoot();
+	if (monorepoRoot) {
+		const piCli = path.join(monorepoRoot, "packages", "coding-agent", "dist", "cli.js");
+		if (existsSync(piCli)) {
+			return { command: process.execPath, args: [piCli, ...args] };
+		}
+	}
+
+	// 3. Legacy: re-invoke the current script (works for standalone pi-hub install)
 	const currentScript = process.argv[1];
 	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
 	if (currentScript && !isBunVirtualScript && existsSync(currentScript)) {
 		return { command: process.execPath, args: [currentScript, ...args] };
 	}
 
-	const execName = path.basename(process.execPath).toLowerCase();
-	const isGenericRuntime = /^(node|bun)(\.exe)?$/.test(execName);
-	if (!isGenericRuntime) {
-		return { command: process.execPath, args };
-	}
-
+	// 4. Fallback: try "pi" from PATH
 	return { command: "pi", args };
+}
+
+/** Walk up from cwd looking for package.json with a pi-hub or pi dependency. */
+function findMonorepoRoot(): string | undefined {
+	let dir = process.cwd();
+	for (let i = 0; i < 10; i++) {
+		const pkgPath = path.join(dir, "package.json");
+		if (existsSync(pkgPath)) {
+			try {
+				const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+				if (
+					pkg.name === "pi-mono" ||
+					pkg.dependencies?.["@earendil-works/pi-coding-agent"] ||
+					pkg.devDependencies?.["@earendil-works/pi-coding-agent"]
+				) {
+					return dir;
+				}
+			} catch {
+				/* skip */
+			}
+		}
+		dir = path.dirname(dir);
+	}
+	return undefined;
 }
 
 function writeTempPromptFile(agentName: string, prompt: string): { dir: string; filePath: string } {

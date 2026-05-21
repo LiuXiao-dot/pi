@@ -132,6 +132,7 @@ npx pi-hub --help
 | 脚本 | 说明 |
 |------|------|
 | `npm run hub` | 按需构建并启动 |
+| `npm run web:build` | 仅构建 Web UI |
 | `npm run hub:build` | 构建 Web UI + hub |
 | `npm run hub:init` | 创建 `.pi/hub.json` |
 

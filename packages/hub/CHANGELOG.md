@@ -7,6 +7,7 @@
 - Web UI sign-in no longer requires a room id; after login, a room list (create / delete / enter) is shown before joining chat.
 - PM task prompts include a per-room worker roster (Who / Can do / When) from role frontmatter (`who`, `can`, `when`); PM is instructed it only sees roles assigned to the room, not the global library.
 - Multi-role orchestration no longer uses every discovered role; only names in the room `roleNames` list run (empty list disables orchestration until roles are added).
+- Monorepo root script `build:web` renamed to `web:build` (matches `hub:build`: `<package>:build`).
 
 ### Breaking Changes
 
@@ -34,7 +35,13 @@
 - Model catalog in `hub.json` (`models.catalog`, `models.session`, `models.roleModels`) with Web UI dropdowns for session and per-role models; `get_models_config` and `set_role_model` commands.
 - Multi-role orchestration (`roles.enabled` in hub.json): PM subprocess task planning, per-role subprocess execution with model/tools/skills/rules from `.pi/roles/`, `role_plan` / `role_progress` / `role_gap` WebSocket events, and main-session synthesis.
 
+### Added
+
+- `@role` and `@user` mentions in chat prompts: only `@mentioned` room roles run orchestration (`@pm` plans tasks; `@web-ui` and other workers run directly when mentioned without PM).
+
 ### Fixed
 
+- Prompts without any `@role` mention use the main session directly, even when the room has assigned roles.
+- Hub session startup falls back to the first `models.catalog` entry with configured auth when `models.session` is missing or unavailable.
 - Improved join/auth error messages and safe JSON broadcast to avoid hub crashes disconnecting clients.
 - Hub startup warns when `PI_HUB_TOKEN` overrides `.pi/hub.json`; token compare trims whitespace.

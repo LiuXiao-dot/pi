@@ -1,3 +1,4 @@
+import { type MentionTarget, setupMentionComposer } from "./composer-mentions.ts";
 import { defaultWsUrl, HubClient } from "./hub-client.ts";
 import type {
 	HubActivityUpdateMessage,
@@ -650,6 +651,8 @@ function renderWorkspace(
 
 	const chipsRow = el("div", "composer-chips");
 
+	const mentionMenu = el("div", "mention-menu hidden");
+
 	const inputRow = el("div", "composer-input-row");
 
 	const fileInput = el("input") as HTMLInputElement;
@@ -665,14 +668,14 @@ function renderWorkspace(
 	attachBtn.onclick = () => fileInput.click();
 
 	const input = el("textarea") as HTMLTextAreaElement;
-	input.placeholder = "Message…";
+	input.placeholder = "Message… (@pm, @role, @user)";
 
 	const sendBtn = el("button", "btn-send");
 	sendBtn.textContent = "Send";
 
 	inputRow.append(attachBtn, input, sendBtn);
 	composer.append(attachContainer);
-	attachContainer.append(chipsRow, inputRow);
+	attachContainer.append(chipsRow, inputRow, mentionMenu);
 	panel.appendChild(composer);
 	panel.appendChild(fileInput);
 
@@ -787,31 +790,37 @@ function renderWorkspace(
 		const items: Array<{ name: string; cb: HTMLInputElement }> = [];
 
 		function renderAvailable(): void {
-			list.innerHTML = "";
+			list.innerHTML = "<p style='padding:0.5rem;color:var(--muted)'>Loading skills...</p>";
 			items.length = 0;
-			void client.listSkills().then((skills) => {
-				if (skills.length === 0) {
-					list.textContent = "No skills found in .pi/skills/ or ~/.pi/agent/skills/";
-					return;
-				}
-				for (const s of skills) {
-					const label = el("label", "skill-picker-item");
-					const cb = el("input") as HTMLInputElement;
-					cb.type = "checkbox";
-					cb.checked = checked.has(s.name);
-					const nameSpan = el("span");
-					nameSpan.textContent = s.name;
-					const descSpan = el("span", "skill-picker-desc");
-					descSpan.textContent = s.description ? ` — ${s.description}` : ` (${s.source})`;
-					label.append(cb, nameSpan, descSpan);
-					label.addEventListener("change", () => {
-						if (cb.checked) checked.add(s.name);
-						else checked.delete(s.name);
-					});
-					list.appendChild(label);
-					items.push({ name: s.name, cb });
-				}
-			});
+			client
+				.listSkills()
+				.then((skills) => {
+					list.innerHTML = "";
+					if (skills.length === 0) {
+						list.textContent = "No skills found in .pi/skills/ or ~/.pi/agent/skills/";
+						return;
+					}
+					for (const s of skills) {
+						const label = el("label", "skill-picker-item");
+						const cb = el("input") as HTMLInputElement;
+						cb.type = "checkbox";
+						cb.checked = checked.has(s.name);
+						const nameSpan = el("span");
+						nameSpan.textContent = s.name;
+						const descSpan = el("span", "skill-picker-desc");
+						descSpan.textContent = s.description ? ` — ${s.description}` : ` (${s.source})`;
+						label.append(cb, nameSpan, descSpan);
+						label.addEventListener("change", () => {
+							if (cb.checked) checked.add(s.name);
+							else checked.delete(s.name);
+						});
+						list.appendChild(label);
+						items.push({ name: s.name, cb });
+					}
+				})
+				.catch((err) => {
+					list.innerHTML = `<p style='padding:0.5rem;color:var(--error)'>Error loading skills: ${err instanceof Error ? err.message : String(err)}</p>`;
+				});
 		}
 
 		modal.appendChild(list);
@@ -1270,6 +1279,8 @@ function renderWorkspace(
 	let turnHostName: string | null = null;
 	let clientId = "";
 	let presenceCount = 0;
+	let presenceMembers: Array<{ displayName: string }> = [];
+	let roomAssignedRoles: string[] = [];
 	let statusModelSuffix = "loading models…";
 	let availableModels: HubModelInfo[] = [];
 	let switchingModel = false;
@@ -1866,7 +1877,38 @@ function renderWorkspace(
 		roomSkillsInput.value = (config.skills ?? []).join(", ");
 		roomRulesInput.value = config.rules ?? "";
 		roomRolesEnabled.checked = config.rolesEnabled === true;
+		roomAssignedRoles = config.roleNames ?? [];
 	}
+
+	function getMentionTargets(): MentionTarget[] {
+		const targets: MentionTarget[] = [];
+		for (const name of roomAssignedRoles) {
+			targets.push({
+				kind: "role",
+				name,
+				label: name,
+				hint: "Room role",
+			});
+		}
+		for (const member of presenceMembers) {
+			if (member.displayName === session.displayName) {
+				continue;
+			}
+			targets.push({
+				kind: "user",
+				name: member.displayName,
+				label: member.displayName,
+				hint: "Online",
+			});
+		}
+		return targets;
+	}
+
+	setupMentionComposer({
+		input,
+		menu: mentionMenu,
+		getTargets: getMentionTargets,
+	});
 
 	function clearChatPanels(): void {
 		messages.innerHTML = "";
@@ -1984,7 +2026,9 @@ function renderWorkspace(
 			applyStateModel(msg.state as HubSessionState | undefined);
 		}
 		if (msg.type === "presence") {
-			presenceCount = ((msg.members as unknown[]) ?? []).length;
+			const members = (msg.members as Array<{ displayName: string }> | undefined) ?? [];
+			presenceMembers = members;
+			presenceCount = members.length;
 			updateHeaderStatus();
 		}
 		if (msg.type === "error") {
@@ -2033,7 +2077,7 @@ function renderWorkspace(
 		renderChips();
 
 		appendMessage("user", displayText, session.displayName);
-		client.prompt(text, images.length > 0 ? images : undefined);
+		client.prompt(text, images.length > 0 ? { images } : undefined);
 	};
 
 	input.addEventListener("keydown", (e) => {

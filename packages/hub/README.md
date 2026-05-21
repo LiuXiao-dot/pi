@@ -106,6 +106,7 @@ npx pi-hub --help
 | Script | Description |
 |--------|-------------|
 | `npm run hub` | Build if needed, run hub |
+| `npm run web:build` | Build web UI only |
 | `npm run hub:build` | Build web UI + hub |
 | `npm run hub:init` | Create `.pi/hub.json` |
 

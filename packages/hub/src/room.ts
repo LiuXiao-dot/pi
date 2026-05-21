@@ -2,6 +2,7 @@ import type { AgentSession, AgentSessionEvent, CreateAgentSessionResult } from "
 import type { WebSocket } from "ws";
 import type { ResolvedHubModelsConfig, ResolvedHubRolesConfig } from "./config.ts";
 import { ExtensionUiRouter } from "./extension-ui.ts";
+import { resolveMessageMentions } from "./mentions.ts";
 import { listHubModels } from "./model-info.ts";
 import {
 	applyRoleModelOverrides,
@@ -149,19 +150,52 @@ export class Room {
 		};
 	}
 
-	/** Apply models.session from hub.json if configured. */
+	/** Apply models.session from hub.json, or first catalog model with auth if session is unavailable. */
 	async applyConfiguredSessionModel(): Promise<void> {
-		const ref = this.modelsConfig.sessionModelRef ? parseModelRef(this.modelsConfig.sessionModelRef) : undefined;
-		if (!ref) {
-			return;
-		}
-		const available = await this.session.modelRegistry.getAvailable();
-		const model = available.find((m) => m.provider === ref.provider && m.id === ref.modelId);
+		const model = await this.resolveSessionModel();
 		if (!model) {
-			console.warn(`[pi-hub] models.session not found: ${this.modelsConfig.sessionModelRef}`);
 			return;
 		}
 		await this.session.setModel(model);
+	}
+
+	private async resolveSessionModel() {
+		const available = await this.session.modelRegistry.getAvailable();
+		const findRef = (refStr: string | undefined) => {
+			const ref = refStr ? parseModelRef(refStr) : undefined;
+			if (!ref) {
+				return undefined;
+			}
+			return available.find((m) => m.provider === ref.provider && m.id === ref.modelId);
+		};
+
+		const sessionRef = this.modelsConfig.sessionModelRef;
+		const sessionModel = findRef(sessionRef);
+		if (sessionModel) {
+			return sessionModel;
+		}
+
+		if (sessionRef) {
+			console.warn(`[pi-hub] models.session not available: ${sessionRef}; trying models.catalog fallback`);
+		}
+
+		for (const entry of this.modelsConfig.catalog) {
+			const model = findRef(entry);
+			if (model && this.session.modelRegistry.hasConfiguredAuth(model)) {
+				console.log(`[pi-hub] Using catalog session model: ${entry}`);
+				return model;
+			}
+		}
+
+		for (const entry of this.modelsConfig.catalog) {
+			const model = findRef(entry);
+			if (model) {
+				console.warn(`[pi-hub] Using catalog session model without auth: ${entry}`);
+				return model;
+			}
+		}
+
+		return undefined;
 	}
 
 	async start(): Promise<void> {
@@ -208,6 +242,10 @@ export class Room {
 		return this.clients.size;
 	}
 
+	private getPresenceDisplayNames(): string[] {
+		return [...this.clients.values()].map((c) => c.displayName);
+	}
+
 	getClient(clientId: string): RoomClient | undefined {
 		return this.clients.get(clientId);
 	}
@@ -235,6 +273,10 @@ export class Room {
 				return;
 
 			case "prompt": {
+				const mentions = resolveMessageMentions(message.message, {
+					roleNames: this.roomConfig.roleNames ?? [],
+					userNames: this.getPresenceDisplayNames(),
+				});
 				const result = this.queue.enqueue({
 					command: "prompt",
 					clientId: client.id,
@@ -242,6 +284,8 @@ export class Room {
 					message: message.message,
 					images: message.images,
 					streamingBehavior: message.streamingBehavior,
+					mentionedRoles: mentions.roles,
+					mentionedUsers: mentions.users,
 					id: message.id,
 				});
 				this.sendCommandResult(client, "prompt", message.id, result.accepted, result.error);

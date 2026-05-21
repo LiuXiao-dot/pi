@@ -15,6 +15,7 @@
 
 ### Added
 
+- Composer `@` mention picker for online users and room-assigned roles; only `@role` mentions trigger role orchestration on send.
 - Assistant replies show the queue turn host name; activity bar reflects replying, thinking, tool use, and compaction from hub `activity_update` events.
 - Web SPA for pi-hub: connect form, shared message stream, prompt queue indicator, and extension UI dialogs.
 - Model selector and API endpoint (base URL) panel for switching models and configuring proxy URLs.

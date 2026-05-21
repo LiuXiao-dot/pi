@@ -441,10 +441,15 @@ export class HubClient {
 		return data.models ?? [];
 	}
 
-	prompt(message: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): void {
+	prompt(
+		message: string,
+		options?: {
+			images?: Array<{ type: "image"; data: string; mimeType: string }>;
+		},
+	): void {
 		const payload: Record<string, unknown> = { type: "prompt", message };
-		if (images && images.length > 0) {
-			payload.images = images;
+		if (options?.images && options.images.length > 0) {
+			payload.images = options.images;
 		}
 		this.send(payload);
 	}

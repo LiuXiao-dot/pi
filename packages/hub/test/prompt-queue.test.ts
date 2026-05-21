@@ -46,4 +46,47 @@ describe("PromptQueue", () => {
 		expect(session.prompt).toHaveBeenNthCalledWith(1, "first", expect.objectContaining({ source: "rpc" }));
 		expect(session.prompt).toHaveBeenNthCalledWith(2, "second", expect.objectContaining({ source: "rpc" }));
 	});
+
+	it("skips role orchestration when no @roles are mentioned", async () => {
+		const { session } = createMockSession();
+		const run = vi.fn(async () => {});
+		const orchestrator = {
+			isReady: () => true,
+			run,
+		};
+		const queue = new PromptQueue(session as never, () => {}, { roleOrchestrator: orchestrator as never });
+
+		queue.enqueue({
+			command: "prompt",
+			clientId: "a",
+			displayName: "A",
+			message: "direct",
+			mentionedRoles: [],
+		});
+
+		await vi.waitFor(() => expect(session.prompt).toHaveBeenCalledTimes(1), { timeout: 5000 });
+		expect(run).not.toHaveBeenCalled();
+		expect(session.prompt).toHaveBeenCalledWith("direct", expect.objectContaining({ source: "rpc" }));
+	});
+
+	it("runs orchestration when @roles are mentioned", async () => {
+		const { session } = createMockSession();
+		const run = vi.fn(async () => {});
+		const orchestrator = {
+			isReady: () => true,
+			run,
+		};
+		const queue = new PromptQueue(session as never, () => {}, { roleOrchestrator: orchestrator as never });
+
+		queue.enqueue({
+			command: "prompt",
+			clientId: "a",
+			displayName: "A",
+			message: "@web-ui implement",
+			mentionedRoles: ["web-ui"],
+		});
+
+		await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1), { timeout: 5000 });
+		expect(session.prompt).not.toHaveBeenCalled();
+	});
 });

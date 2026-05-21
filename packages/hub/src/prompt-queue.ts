@@ -1,5 +1,6 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { formatUserMentionPrefix } from "./mentions.ts";
 import type { HubQueueItemSnapshot, HubQueueUpdate } from "./protocol.ts";
 import type { RoleOrchestrator } from "./role-orchestrator.ts";
 
@@ -13,6 +14,9 @@ export interface QueueItem {
 	message: string;
 	images?: ImageContent[];
 	streamingBehavior?: "steer" | "followUp";
+	/** Room-assigned role names from @mentions; empty means direct session prompt. */
+	mentionedRoles?: string[];
+	mentionedUsers?: string[];
 	queuedAt: string;
 }
 
@@ -69,6 +73,8 @@ export class PromptQueue {
 			message: item.message,
 			images: item.images,
 			streamingBehavior: item.streamingBehavior,
+			mentionedRoles: item.mentionedRoles,
+			mentionedUsers: item.mentionedUsers,
 		};
 
 		if (entry.command === "prompt" && this.session.isStreaming && !entry.streamingBehavior) {
@@ -151,12 +157,18 @@ export class PromptQueue {
 	private async runPrompt(item: QueueItem): Promise<void> {
 		const orchestrator = this.roleOrchestrator;
 		const signal = this.getAbortSignal?.();
-		if (orchestrator?.isReady()) {
-			await orchestrator.run(item.message, signal);
+		const mentionedRoles = item.mentionedRoles ?? [];
+		if (mentionedRoles.length > 0 && orchestrator?.isReady()) {
+			await orchestrator.run(item.message, signal, {
+				mentionedRoles,
+				mentionedUsers: item.mentionedUsers,
+			});
 			return;
 		}
 
-		await this.session.prompt(item.message, {
+		const userPrefix = formatUserMentionPrefix(item.mentionedUsers ?? []);
+		const message = userPrefix ? `${userPrefix}${item.message}` : item.message;
+		await this.session.prompt(message, {
 			images: item.images,
 			streamingBehavior: item.streamingBehavior,
 			source: "rpc",

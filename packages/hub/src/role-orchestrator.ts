@@ -1,6 +1,7 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ResolvedHubRolesConfig } from "./config.ts";
+import { formatUserMentionPrefix } from "./mentions.ts";
 import { applyRoleModelOverrides } from "./models-config.ts";
 import { discoverRoles, formatRoomRosterForPm, getRoleByName } from "./roles/discovery.ts";
 import { parseTaskPlan } from "./roles/parse-plan.ts";
@@ -19,6 +20,12 @@ import type {
 import type { RoomConfigFile, RoomRegistry } from "./room-registry.ts";
 
 export type RoleOrchestratorBroadcast = (message: RolePlanEvent | RoleGapEvent | RoleProgressEvent) => void;
+
+export interface RoleOrchestratorRunOptions {
+	/** Role names from @mentions in the user message (room-assigned only). */
+	mentionedRoles: string[];
+	mentionedUsers?: string[];
+}
 
 export interface RoleOrchestratorOptions {
 	session: AgentSession;
@@ -146,7 +153,9 @@ export class RoleOrchestrator {
 			return false;
 		}
 		const discovery = this.discoverConfiguredRoles();
-		return discovery.roles.length > 0;
+		const pmRoleName = this.rolesConfig.pmRole;
+		const hasWorker = discovery.roles.some((r) => r.name !== pmRoleName);
+		return discovery.roles.length > 0 && hasWorker;
 	}
 
 	private async recordRoleMessage(
@@ -175,20 +184,27 @@ export class RoleOrchestrator {
 		this.session.agent.state.messages = sessionContext.messages;
 	}
 
-	async run(userMessage: string, signal?: AbortSignal): Promise<void> {
-		this.persistUserMessage(userMessage);
+	async run(userMessage: string, signal?: AbortSignal, options?: RoleOrchestratorRunOptions): Promise<void> {
+		const mentionedRoles = options?.mentionedRoles ?? [];
+		const userPrefix = formatUserMentionPrefix(options?.mentionedUsers ?? []);
+		const persistedText = userPrefix ? `${userPrefix}${userMessage}` : userMessage;
+		this.persistUserMessage(persistedText);
 
 		const discovery = this.discoverConfiguredRoles();
 		const roomContext = buildRoomContextPrefix(this.session);
 
-		const roleNames = this.getRoomConfig().roleNames ?? [];
-		const hasPm = roleNames.includes(this.rolesConfig.pmRole);
-		const pmRole = getRoleByName(discovery.roles, this.rolesConfig.pmRole);
-		const workerRoles = discovery.roles.filter((r) => r.name !== this.rolesConfig.pmRole);
+		const mentionedSet = new Set(mentionedRoles);
+		const pmRoleName = this.rolesConfig.pmRole;
+		const pmRole = getRoleByName(discovery.roles, pmRoleName);
+		const allWorkerRoles = discovery.roles.filter((r) => r.name !== pmRoleName);
+		const mentionedWorkers = allWorkerRoles.filter((r) => mentionedSet.has(r.name));
+		const invokePm = mentionedSet.has(pmRoleName) && pmRole !== undefined;
 
-		if (hasPm && pmRole && workerRoles.length > 0) {
-			// === PM mode: PM plans, workers execute ===
-			const roomRoster = formatRoomRosterForPm(workerRoles);
+		if (invokePm && pmRole) {
+			// === PM mode: PM plans, workers execute (roster scoped to @mentioned workers when any) ===
+			const rosterWorkers = mentionedWorkers.length > 0 ? mentionedWorkers : allWorkerRoles;
+			const roomRoster = formatRoomRosterForPm(rosterWorkers);
+			const allowedWorkers = new Set(rosterWorkers.map((r) => r.name));
 
 			const pmResult = await this.runRole({
 				role: pmRole,
@@ -212,13 +228,20 @@ export class RoleOrchestrator {
 			await this.recordRoleMessage("hub_role_plan", planSummary, { plan });
 
 			const allGaps: TaskPlanGap[] = [...plan.uncovered];
-			const roleMap = new Map(workerRoles.map((r) => [r.name, r]));
+			const roleMap = new Map(rosterWorkers.map((r) => [r.name, r]));
 
 			const executableTasks = [];
 			for (const task of plan.tasks) {
-				if (task.role === this.rolesConfig.pmRole) continue;
+				if (task.role === pmRoleName) continue;
 				if (!roleMap.has(task.role)) {
 					allGaps.push({ description: task.task, reason: `No role named "${task.role}"` });
+					continue;
+				}
+				if (!allowedWorkers.has(task.role)) {
+					allGaps.push({
+						description: task.task,
+						reason: `Role "${task.role}" was not @mentioned in the request`,
+					});
 					continue;
 				}
 				executableTasks.push(task);
@@ -295,13 +318,13 @@ export class RoleOrchestrator {
 				results.push(...batchResults);
 			}
 
-			const synthesisMessage = buildSynthesisPrompt(userMessage, plan, results);
+			const synthesisMessage = buildSynthesisPrompt(persistedText, plan, results);
 			await this.session.prompt(synthesisMessage, { source: "rpc" });
-		} else {
-			// === Direct mode: each assigned role processes the user message independently ===
+		} else if (mentionedWorkers.length > 0) {
+			// === Direct mode: each @mentioned worker role runs independently ===
 			const results: RoleTaskResult[] = [];
 
-			for (const role of discovery.roles) {
+			for (const role of mentionedWorkers) {
 				const taskId = crypto.randomUUID();
 
 				this.onBroadcast({ type: "role_progress", role: role.name, taskId, phase: "started" });
@@ -354,7 +377,7 @@ export class RoleOrchestrator {
 				const sections = results.map(
 					(r) => `### Role: ${r.role} (${r.exitCode === 0 ? "completed" : "failed"})\n\n${r.output}`,
 				);
-				const combined = `[Multi-role direct responses]\n\nOriginal request:\n${userMessage}\n\n${sections.join("\n\n---\n\n")}`;
+				const combined = `[Multi-role direct responses]\n\nOriginal request:\n${persistedText}\n\n${sections.join("\n\n---\n\n")}`;
 				await this.session.prompt(combined, { source: "rpc" });
 			}
 		}

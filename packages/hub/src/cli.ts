@@ -138,7 +138,7 @@ async function runServer(parsed: ParsedCli): Promise<void> {
 	if (!existsSync(join(publicDir, "index.html"))) {
 		console.error(`[pi-hub] Web UI not found at ${publicDir}`);
 		console.error("  From pi-mono root: npm run hub:build");
-		console.error("  Or: npm run build:web && npm run build --workspace=@earendil-works/pi-hub");
+		console.error("  Or: npm run web:build && npm run build --workspace=@earendil-works/pi-hub");
 		process.exit(1);
 	}
 
