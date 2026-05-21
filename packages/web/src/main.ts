@@ -276,7 +276,27 @@ function renderWorkspace(
 	const createBtn = el("button", "secondary-btn");
 	createBtn.type = "button";
 	createBtn.textContent = "Create";
-	roomToolbar.append(newRoomInput, createBtn);
+	const rebirthBtn = el("button", "secondary-btn danger-btn");
+	rebirthBtn.type = "button";
+	rebirthBtn.textContent = "重生";
+	rebirthBtn.title = "Clear current room conversation";
+	rebirthBtn.onclick = () => {
+		if (!selectedRoomId || !client.isJoined()) return;
+		if (!confirm("Clear all messages in this room?")) return;
+		void (async () => {
+			try {
+				await client.clearRoomSession(selectedRoomId!);
+			} catch (e) {
+				showRailError(e instanceof Error ? e.message : String(e));
+			}
+		})();
+	};
+	const sleepBtn = el("button", "secondary-btn");
+	sleepBtn.type = "button";
+	sleepBtn.textContent = "睡觉";
+	sleepBtn.title = "Sleep mode (coming soon)";
+	sleepBtn.disabled = true;
+	roomToolbar.append(newRoomInput, createBtn, rebirthBtn, sleepBtn);
 
 	const railErr = el("div", "error-banner hidden");
 	const roomList = el("ul", "room-list");
@@ -477,6 +497,12 @@ function renderWorkspace(
 			swipeWrap.appendChild(row);
 			li.append(deleteAction, swipeWrap);
 			roomList.appendChild(li);
+
+			// Render role sub-rows for the active room
+			if (roomId === selectedRoomId) {
+				activeRoomLi = li;
+				renderRoleSubRows(li);
+			}
 		}
 	}
 
@@ -1271,16 +1297,94 @@ function renderWorkspace(
 
 	let streamingAssistantEl: HTMLElement | null = null;
 	let streamingAssistantHost: string | null = null;
-	let toolMsgMap: Map<
+	let toolMsgMap = new Map<
 		string,
 		{ div: HTMLElement; detailWrap: HTMLElement; argsPre: HTMLElement; toolName: string; args: unknown }
-	> | null = null;
+	>();
 	let lastMetaHost: string | null = null;
 	let turnHostName: string | null = null;
 	let clientId = "";
 	let presenceCount = 0;
 	let presenceMembers: Array<{ displayName: string }> = [];
 	let roomAssignedRoles: string[] = [];
+	let activeRoles: Array<{ roleName: string; taskId: string; phase: string; preview?: string; fullOutput?: string }> =
+		[];
+	let activeRoomLi: HTMLElement | null = null;
+
+	function showRoleOutputModal(role: {
+		roleName: string;
+		phase: string;
+		preview?: string;
+		fullOutput?: string;
+	}): void {
+		const backdrop = el("div", "modal-backdrop");
+		const modal = el("div", "modal");
+
+		const title = el("h3");
+		title.textContent = `Role: ${role.roleName}`;
+		modal.appendChild(title);
+
+		const status = el("p", "role-output-status");
+		status.textContent = `Status: ${role.phase}`;
+		status.style.cssText = role.phase === "failed" ? "color: var(--error);" : "color: var(--success);";
+		modal.appendChild(status);
+
+		const pre = el("pre", "role-output-content");
+		pre.textContent = role.fullOutput ?? role.preview ?? "(no output)";
+		pre.style.cssText =
+			"max-height:60vh;overflow-y:auto;white-space:pre-wrap;font-family:var(--mono);font-size:0.75rem;line-height:1.5;padding:0.75rem;background:var(--canvas);border-radius:var(--radius-md);border:1px solid var(--border);";
+		modal.appendChild(pre);
+
+		const actions = el("div", "modal-actions");
+		const closeBtn = el("button", "primary-btn");
+		closeBtn.textContent = "Close";
+		closeBtn.onclick = () => backdrop.remove();
+		actions.appendChild(closeBtn);
+		modal.appendChild(actions);
+
+		backdrop.appendChild(modal);
+		document.body.appendChild(backdrop);
+
+		backdrop.addEventListener("click", (e) => {
+			if (e.target === backdrop) backdrop.remove();
+		});
+	}
+
+	function renderRoleSubRows(li: HTMLElement): void {
+		const existing = li.querySelector(".room-role-sub-rows");
+		if (existing) existing.remove();
+
+		if (activeRoles.length === 0) return;
+
+		const container = el("div", "room-role-sub-rows");
+		for (const role of activeRoles) {
+			const subRow = el("button", "room-role-sub-row");
+			subRow.type = "button";
+
+			const statusDot = el("span", `role-sub-dot ${role.phase}`);
+			const nameSpan = el("span", "role-sub-name");
+			nameSpan.textContent = role.roleName;
+			const phaseSpan = el("span", "role-sub-phase");
+			if (role.phase === "started") {
+				phaseSpan.textContent = "running…";
+			} else if (role.phase === "done") {
+				phaseSpan.textContent = "completed";
+			} else {
+				phaseSpan.textContent = role.phase;
+			}
+
+			subRow.append(statusDot, nameSpan, phaseSpan);
+
+			subRow.classList.add("clickable");
+			subRow.onclick = (e) => {
+				e.stopPropagation();
+				showRoleOutputModal(role);
+			};
+
+			container.appendChild(subRow);
+		}
+		li.appendChild(container);
+	}
 	let statusModelSuffix = "loading models…";
 	let availableModels: HubModelInfo[] = [];
 	let switchingModel = false;
@@ -1477,19 +1581,77 @@ function renderWorkspace(
 		body.append(document.createTextNode(text));
 		div.appendChild(body);
 		messages.appendChild(div);
-		messages.scrollTop = messages.scrollHeight;
+		scrollMessagesToBottom();
 		return div;
 	}
 
+	function extractConclusion(text: string): string {
+		if (!text) return "";
+		const parts = text.split(/\n\n+/);
+		const last = parts[parts.length - 1]!.trim();
+		if (last.length > 150) {
+			return `${last.slice(0, 150)}\u2026`;
+		}
+		return last;
+	}
+
+	function appendCollapsibleAssistantMsg(
+		text: string,
+		isStreaming: boolean,
+		meta?: string,
+		animate = true,
+	): HTMLElement {
+		const div = el("div", `msg assistant${animate ? " msg-animate-in" : ""}`);
+		const header = el("div", "msg-collapse-header");
+		const toggle = el("span", "msg-collapse-toggle");
+		toggle.textContent = "\u25b6";
+		const avatar = el("span", "msg-avatar");
+		avatar.textContent = ASSISTANT_AVATAR;
+		avatar.setAttribute("aria-hidden", "true");
+		const label = el("span", "msg-collapse-label");
+		label.textContent = isStreaming ? "Replying\u2026" : extractConclusion(text);
+		header.append(toggle, avatar, label);
+		if (meta) {
+			const metaDiv = el("div", "meta");
+			metaDiv.textContent = meta;
+			header.appendChild(metaDiv);
+		}
+		const body = el("div", "msg-collapse-body hidden");
+		body.textContent = text || "\u22ef";
+		let expanded = false;
+		header.addEventListener("click", () => {
+			expanded = !expanded;
+			body.classList.toggle("hidden", !expanded);
+			toggle.textContent = expanded ? "\u25bc" : "\u25b6";
+		});
+		div.append(header, body);
+		messages.appendChild(div);
+		scrollMessagesToBottom();
+		return div;
+	}
+
+	function updateCollapsibleAssistantLabel(el: HTMLElement): void {
+		const body = el.querySelector(".msg-collapse-body") as HTMLElement | null;
+		const label = el.querySelector(".msg-collapse-label") as HTMLElement | null;
+		if (body && label) {
+			const fullText = body.textContent ?? "";
+			label.textContent = extractConclusion(fullText);
+		}
+	}
+
 	function renderHistory(msgs: unknown[]): void {
+		// Prevent visible scroll during rendering by hiding overflow temporarily.
+		messages.style.overflow = "hidden";
 		messages.innerHTML = "";
 		streamingAssistantEl = null;
 		streamingAssistantHost = null;
 		lastMetaHost = null;
 		for (const msg of msgs) {
 			const m = msg as { role?: string; customType?: string };
-			if (m.role === "user" || m.role === "assistant") {
-				appendMessage(m.role, getMessageText(msg), undefined, false);
+			if (m.role === "user") {
+				appendMessage("user", getMessageText(msg), undefined, false);
+			} else if (m.role === "assistant") {
+				appendCollapsibleAssistantMsg(getMessageText(msg), false, undefined, false);
 			} else if (m.role === "custom") {
 				const div = el("div", `msg ${messageRoleClass(m)}`);
 				const meta = el("div", "meta");
@@ -1501,7 +1663,11 @@ function renderWorkspace(
 				messages.appendChild(div);
 			}
 		}
+		// Force to bottom synchronously (skip smooth behavior), then restore overflow.
 		messages.scrollTop = messages.scrollHeight;
+		requestAnimationFrame(() => {
+			messages.style.overflow = "";
+		});
 	}
 
 	function lastUserMessageText(): string | null {
@@ -1513,25 +1679,24 @@ function renderWorkspace(
 		if (!streamingAssistantEl) {
 			return;
 		}
-		const meta = streamingAssistantEl.querySelector(".meta");
-		const label = assistantMetaLabel(host);
-		if (meta) {
-			meta.textContent = label;
-		} else if (label) {
-			const m = el("div", "meta");
-			m.textContent = label;
-			streamingAssistantEl.prepend(m);
-		}
-		const body = streamingAssistantEl.querySelector(".msg-body");
+		const body = streamingAssistantEl.querySelector(".msg-collapse-body") as HTMLElement | null;
 		if (body) {
 			const text = getMessageText(message);
-			if (text) {
-				body.textContent = text;
-			} else {
-				body.textContent = "⋯";
+			body.textContent = text || "⋯";
+		}
+		if (host) {
+			const meta = streamingAssistantEl.querySelector(".meta");
+			const label = assistantMetaLabel(host);
+			if (meta && label) {
+				meta.textContent = label;
+			} else if (label) {
+				const m = el("div", "meta");
+				m.textContent = label;
+				const header = streamingAssistantEl.querySelector(".msg-collapse-header");
+				if (header) header.appendChild(m);
 			}
 		}
-		messages.scrollTop = messages.scrollHeight;
+		scrollMessagesToBottom();
 	}
 
 	function updateQueue(msg: HubServerMessage): void {
@@ -1587,6 +1752,26 @@ function renderWorkspace(
 					roleProgressBar.classList.add("hidden");
 				}
 			}, 8000);
+		}
+
+		// Update active roles for sub-row display
+		const taskId = String(msg.taskId ?? "");
+		const existing = activeRoles.findIndex((r) => r.taskId === taskId);
+		const fullOutput = typeof msg.fullOutput === "string" ? msg.fullOutput : undefined;
+		const entry = {
+			roleName: role,
+			taskId,
+			phase,
+			preview: typeof msg.preview === "string" ? msg.preview : undefined,
+			fullOutput,
+		};
+		if (existing >= 0) {
+			activeRoles[existing] = entry;
+		} else {
+			activeRoles.push(entry);
+		}
+		if (activeRoomLi) {
+			renderRoleSubRows(activeRoomLi);
 		}
 	}
 
@@ -1646,7 +1831,7 @@ function renderWorkspace(
 				body.textContent = getMessageText(event.message);
 				div.appendChild(body);
 				messages.appendChild(div);
-				messages.scrollTop = messages.scrollHeight;
+				scrollMessagesToBottom();
 			}
 		}
 		if (event.type === "message_update" && event.message) {
@@ -1654,8 +1839,11 @@ function renderWorkspace(
 			if (m.role === "assistant") {
 				const text = getMessageText(event.message);
 				if (!streamingAssistantEl && text) {
-					// Create element now that we have actual content
-					streamingAssistantEl = appendMessage("assistant", text, assistantMetaLabel(streamingAssistantHost));
+					streamingAssistantEl = appendCollapsibleAssistantMsg(
+						text,
+						true,
+						assistantMetaLabel(streamingAssistantHost),
+					);
 				} else if (streamingAssistantEl) {
 					updateStreamingAssistant(event.message, hostDisplayName);
 				}
@@ -1666,9 +1854,14 @@ function renderWorkspace(
 			if (m.role === "assistant") {
 				const text = getMessageText(event.message);
 				if (!streamingAssistantEl && text) {
-					streamingAssistantEl = appendMessage("assistant", text, assistantMetaLabel(streamingAssistantHost));
+					streamingAssistantEl = appendCollapsibleAssistantMsg(
+						text,
+						false,
+						assistantMetaLabel(streamingAssistantHost),
+					);
 				} else if (streamingAssistantEl) {
 					updateStreamingAssistant(event.message, hostDisplayName);
+					updateCollapsibleAssistantLabel(streamingAssistantEl);
 				}
 				streamingAssistantEl = null;
 				streamingAssistantHost = null;
@@ -1716,7 +1909,7 @@ function renderWorkspace(
 			});
 
 			messages.appendChild(div);
-			messages.scrollTop = messages.scrollHeight;
+			scrollMessagesToBottom();
 
 			if (toolCallId) {
 				toolMsgMap.set(toolCallId, { div, detailWrap, argsPre, toolName, args });
@@ -1910,6 +2103,19 @@ function renderWorkspace(
 		getTargets: getMentionTargets,
 	});
 
+	const SCROLL_NEAR_BOTTOM_THRESHOLD = 120;
+
+	function isNearBottom(): boolean {
+		return messages.scrollHeight - messages.scrollTop - messages.clientHeight < SCROLL_NEAR_BOTTOM_THRESHOLD;
+	}
+
+	/** Scroll messages to bottom. If force is true, always scroll (history load / room switch). Otherwise only if user is already near bottom. */
+	function scrollMessagesToBottom(force = false): void {
+		if (force || isNearBottom()) {
+			messages.scrollTo({ top: messages.scrollHeight, behavior: "auto" });
+		}
+	}
+
 	function clearChatPanels(): void {
 		messages.innerHTML = "";
 		roleGapBar.classList.add("hidden");
@@ -1927,7 +2133,11 @@ function renderWorkspace(
 		streamingAssistantEl = null;
 		streamingAssistantHost = null;
 		lastMetaHost = null;
-		toolMsgMap = null;
+		toolMsgMap = new Map();
+		activeRoles = [];
+		if (activeRoomLi) {
+			renderRoleSubRows(activeRoomLi);
+		}
 		setStreamingVisual(false);
 	}
 

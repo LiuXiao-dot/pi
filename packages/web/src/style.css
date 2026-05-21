@@ -212,6 +212,13 @@ button:focus-visible {
   transform: scale(0.97);
 }
 
+.secondary-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  transform: none;
+  box-shadow: none;
+}
+
 input,
 textarea,
 select {
@@ -525,6 +532,82 @@ select {
   opacity: 0.45;
   cursor: default;
   transform: none;
+}
+
+/* === Role Sub-Rows (in room list) === */
+
+.room-role-sub-rows {
+  margin-top: 0.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding-left: 0.85rem;
+}
+
+.room-role-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  padding: 0.35rem 0.65rem;
+  cursor: default;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--text-body);
+  transition:
+    border-color var(--duration-fast),
+    background var(--duration-fast);
+}
+
+.room-role-sub-row.clickable {
+  cursor: pointer;
+}
+
+.room-role-sub-row.clickable:hover {
+  border-color: var(--accent-100);
+  background: var(--accent-50);
+}
+
+.role-sub-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.role-sub-dot.started {
+  background: #f5a623;
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+.role-sub-dot.done {
+  background: var(--success);
+}
+
+.role-sub-dot.failed {
+  background: var(--error);
+}
+
+.role-sub-name {
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role-sub-phase {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  color: var(--muted);
 }
 
 /* =================================
@@ -1380,6 +1463,50 @@ select {
 .msg.assistant .msg-avatar {
   background: var(--surface-subtle);
   color: var(--text-body);
+}
+
+/* === Collapsible Assistant Messages === */
+
+.msg.assistant .msg-collapse-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.msg.assistant .msg-collapse-toggle {
+  flex-shrink: 0;
+  font-size: 0.55rem;
+  color: var(--muted);
+  transition: transform var(--duration-fast) ease;
+  line-height: 1;
+  width: 12px;
+  text-align: center;
+}
+
+.msg.assistant .msg-collapse-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  color: var(--text-body);
+  line-height: 1.4;
+}
+
+.msg.assistant .msg-collapse-body {
+  margin-top: 0.45rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--border);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.msg.assistant .msg-collapse-body.hidden {
+  display: none;
 }
 
 /* =================================

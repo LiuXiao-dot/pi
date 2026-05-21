@@ -3,5 +3,8 @@
   "roleNames": [
     "web-ui"
   ],
-  "rolesEnabled": true
+  "rolesEnabled": true,
+  "skills": [
+    "create-skill"
+  ]
 }

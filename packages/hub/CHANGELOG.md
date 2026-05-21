@@ -41,6 +41,8 @@
 
 ### Fixed
 
+- Role subprocess spawn on Windows: `npm run hub` now sets `PI_CLI_SCRIPT` instead of a combined `PI_COMMAND` shell line (fixes `spawn ... ENOENT` and `queue item failed`).
+- Role subprocess logs the configured model per role (from `hub.json` / role frontmatter) at start.
 - Prompts without any `@role` mention use the main session directly, even when the room has assigned roles.
 - Hub session startup falls back to the first `models.catalog` entry with configured auth when `models.session` is missing or unavailable.
 - Improved join/auth error messages and safe JSON broadcast to avoid hub crashes disconnecting clients.

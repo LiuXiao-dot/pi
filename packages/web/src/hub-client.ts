@@ -370,6 +370,14 @@ export class HubClient {
 		});
 	}
 
+	async clearRoomSession(roomId: string): Promise<void> {
+		await this.sendCommand({
+			type: "clear_room_session",
+			token: this.token,
+			roomId,
+		});
+	}
+
 	async listRoles(): Promise<HubRoleSummaryPayload[]> {
 		const data = await this.sendCommand<{ roles: HubRoleSummaryPayload[] }>({
 			type: "list_roles",

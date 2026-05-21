@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
+import { getPiInvocation } from "./pi-invocation.ts";
 import type { ResolvedRoleConfig } from "./resolve-config.ts";
 import { resolveSkillPaths } from "./resolve-skills.ts";
 import type { RoleConfig } from "./types.ts";
@@ -37,57 +38,6 @@ function getFinalAssistantText(messages: Message[]): string {
 		}
 	}
 	return "";
-}
-
-function getPiInvocation(args: string[]): { command: string; args: string[] } {
-	// 1. Environment variable override
-	const envPi = process.env.PI_COMMAND;
-	if (envPi) {
-		return { command: envPi, args };
-	}
-
-	// 2. Look for the pi CLI relative to the monorepo root
-	const monorepoRoot = findMonorepoRoot();
-	if (monorepoRoot) {
-		const piCli = path.join(monorepoRoot, "packages", "coding-agent", "dist", "cli.js");
-		if (existsSync(piCli)) {
-			return { command: process.execPath, args: [piCli, ...args] };
-		}
-	}
-
-	// 3. Legacy: re-invoke the current script (works for standalone pi-hub install)
-	const currentScript = process.argv[1];
-	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
-	if (currentScript && !isBunVirtualScript && existsSync(currentScript)) {
-		return { command: process.execPath, args: [currentScript, ...args] };
-	}
-
-	// 4. Fallback: try "pi" from PATH
-	return { command: "pi", args };
-}
-
-/** Walk up from cwd looking for package.json with a pi-hub or pi dependency. */
-function findMonorepoRoot(): string | undefined {
-	let dir = process.cwd();
-	for (let i = 0; i < 10; i++) {
-		const pkgPath = path.join(dir, "package.json");
-		if (existsSync(pkgPath)) {
-			try {
-				const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-				if (
-					pkg.name === "pi-mono" ||
-					pkg.dependencies?.["@earendil-works/pi-coding-agent"] ||
-					pkg.devDependencies?.["@earendil-works/pi-coding-agent"]
-				) {
-					return dir;
-				}
-			} catch {
-				/* skip */
-			}
-		}
-		dir = path.dirname(dir);
-	}
-	return undefined;
 }
 
 function writeTempPromptFile(agentName: string, prompt: string): { dir: string; filePath: string } {
@@ -150,8 +100,11 @@ export async function runRoleSubprocess(options: RunRoleOptions): Promise<RunRol
 		const userTask = contextPrefix ? `${contextPrefix}\n\nTask: ${task}` : `Task: ${task}`;
 		args.push(userTask);
 
+		const invocation = getPiInvocation(args);
+		const modelLabel = role.model?.trim() || "(session default)";
+		console.log(`[pi-hub] Role "${role.name}" subprocess model=${modelLabel}`);
+
 		const exitCode = await new Promise<number>((resolve, reject) => {
-			const invocation = getPiInvocation(args);
 			const proc = spawn(invocation.command, invocation.args, {
 				cwd,
 				shell: false,
@@ -200,7 +153,12 @@ export async function runRoleSubprocess(options: RunRoleOptions): Promise<RunRol
 			});
 
 			proc.on("error", (err) => {
-				reject(err);
+				const detail = err instanceof Error ? err.message : String(err);
+				reject(
+					new Error(
+						`Role "${role.name}" failed to start (model=${modelLabel}): ${detail}. Command: ${invocation.command}`,
+					),
+				);
 			});
 
 			if (signal) {

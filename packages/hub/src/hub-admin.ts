@@ -94,6 +94,9 @@ export class HubAdmin {
 				case "get_skill_content":
 					await this.handleGetSkillContent(ws, message.name, message.id);
 					return;
+				case "clear_room_session":
+					await this.handleClearRoomSession(ws, message.roomId, message.id);
+					return;
 			}
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
@@ -238,6 +241,20 @@ export class HubAdmin {
 			return;
 		}
 		this.sendCommandResult(ws, "get_skill_content", id, true, undefined, skill);
+	}
+
+	private handleClearRoomSession(ws: WebSocket, roomId: string, id?: string): void {
+		const room = this.options.roomManager.getActiveRoom(roomId);
+		if (!room) {
+			this.sendCommandResult(ws, "clear_room_session", id, false, `Room "${roomId}" not active`);
+			return;
+		}
+		// Clear messages and reset session state
+		room.session.agent.reset();
+		room.session.sessionManager.newSession();
+		// Notify all clients in the room with empty messages
+		room.sendClientUpdate();
+		this.sendCommandResult(ws, "clear_room_session", id, true);
 	}
 
 	private send(ws: WebSocket, message: object): void {

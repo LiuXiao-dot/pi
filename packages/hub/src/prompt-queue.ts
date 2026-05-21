@@ -141,7 +141,12 @@ export class PromptQueue {
 					await this.waitUntilIdle();
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
-					console.error(`[pi-hub] queue item failed: ${message}`);
+					const who = item.displayName ? ` (${item.displayName})` : "";
+					const roles =
+						item.mentionedRoles && item.mentionedRoles.length > 0
+							? ` @roles=${item.mentionedRoles.join(",")}`
+							: "";
+					console.error(`[pi-hub] queue item failed${who}${roles}: ${message}`);
 				} finally {
 					this.current = null;
 					this.turnOriginClientId = null;

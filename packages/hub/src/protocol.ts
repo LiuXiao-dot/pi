@@ -77,7 +77,8 @@ export type HubScopedClientMessage =
 	| { type: "remove_room_role"; token: string; roomId: string; roleName: string; id?: string }
 	| { type: "set_room_roles"; token: string; roomId: string; roleNames: string[]; id?: string }
 	| { type: "list_skills"; token: string; id?: string }
-	| { type: "get_skill_content"; token: string; name: string; id?: string };
+	| { type: "get_skill_content"; token: string; name: string; id?: string }
+	| { type: "clear_room_session"; token: string; roomId: string; id?: string };
 
 export function isHubScopedMessage(message: HubClientMessage): message is HubScopedClientMessage {
 	return (
@@ -94,7 +95,8 @@ export function isHubScopedMessage(message: HubClientMessage): message is HubSco
 		message.type === "remove_room_role" ||
 		message.type === "set_room_roles" ||
 		message.type === "list_skills" ||
-		message.type === "get_skill_content"
+		message.type === "get_skill_content" ||
+		message.type === "clear_room_session"
 	);
 }
 

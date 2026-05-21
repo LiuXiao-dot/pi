@@ -630,4 +630,17 @@ export class Room {
 	private sendError(client: RoomClient, code: string, message: string): void {
 		this.send(client, { type: "error", code, message });
 	}
+
+	/** Send current session state + messages to all clients (used after session clear). */
+	sendClientUpdate(): void {
+		for (const client of this.clients.values()) {
+			this.send(client, {
+				type: "joined",
+				clientId: client.id,
+				roomId: this.roomId,
+				state: buildSessionState(this.session),
+				messages: [],
+			});
+		}
+	}
 }

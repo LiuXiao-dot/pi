@@ -30,17 +30,17 @@ if (!existsSync(cli) || !existsSync(webInHub)) {
 	}
 }
 
-// Detect pi CLI in the monorepo and set PI_COMMAND so role subprocesses can find it.
+// Point role subprocesses at the monorepo pi CLI (node + script path, not a single shell line).
 const piCli = join(root, "packages", "coding-agent", "dist", "cli.js");
 const env = { ...process.env };
-if (!env.PI_COMMAND && existsSync(piCli)) {
-	env.PI_COMMAND = `${process.execPath} "${piCli}"`;
-	console.log(`[pi-hub] Auto-detected pi CLI: ${env.PI_COMMAND}`);
-} else if (env.PI_COMMAND) {
-	console.log(`[pi-hub] Using PI_COMMAND from environment: ${env.PI_COMMAND}`);
+if (!env.PI_CLI_SCRIPT && existsSync(piCli)) {
+	env.PI_CLI_SCRIPT = piCli;
+	console.log(`[pi-hub] Auto-detected pi CLI: ${piCli}`);
+} else if (env.PI_CLI_SCRIPT) {
+	console.log(`[pi-hub] Using PI_CLI_SCRIPT from environment: ${env.PI_CLI_SCRIPT}`);
 } else if (!existsSync(piCli)) {
 	console.warn(`[pi-hub] pi CLI not found at ${piCli} — role subprocesses will fail.`);
-	console.warn(`[pi-hub] Set PI_COMMAND env var or build packages/coding-agent.`);
+	console.warn(`[pi-hub] Build packages/coding-agent or set PI_CLI_SCRIPT.`);
 }
 
 const forwarded = process.argv.slice(2);

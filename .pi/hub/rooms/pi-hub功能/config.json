@@ -1,3 +1,8 @@
 {
-  "rules": "负责模块hub、web 的 功能实现、优化、修复bug。"
+  "rules": "你是程序，负责基于pi的web 自定义hub的功能实现。",
+  "skills": [
+    "pi-architecture",
+    "pi-hub",
+    "pi-web"
+  ]
 }
