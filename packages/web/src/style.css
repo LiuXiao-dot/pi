@@ -3091,7 +3091,7 @@ body.theme-dark .modal-backdrop {
 }
 .office-body {
   display: grid;
-  grid-template-columns: 1fr 240px;
+  grid-template-columns: minmax(0, 1fr) 240px;
   gap: 1rem;
   min-height: 0;
   flex: 1;
@@ -3104,6 +3104,11 @@ body.theme-dark .modal-backdrop {
   display: flex;
   align-items: center;
   justify-content: center;
+  min-width: 0;
+}
+.office-loading {
+  color: var(--text-muted);
+  font-size: 0.85rem;
 }
 .office-stage svg {
   max-width: 100%;
@@ -3114,6 +3119,7 @@ body.theme-dark .modal-backdrop {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  min-width: 0;
 }
 .office-stat {
   background: var(--bg-subtle);
@@ -3136,12 +3142,20 @@ body.theme-dark .modal-backdrop {
 }
 .office-stat-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.5rem;
 }
 .office-stat-row .office-stat {
-  padding: 0.55rem 0.6rem;
+  padding: 0.5rem 0.4rem;
   text-align: center;
+  min-width: 0;
+}
+.office-stat-row .office-stat-label {
+  font-size: 0.6rem;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .office-stat-row .office-stat-value {
   font-size: 1rem;
@@ -3165,20 +3179,166 @@ body.theme-dark .modal-backdrop {
   justify-content: flex-end;
   gap: 0.5rem;
 }
-.office-stage svg .ws-group {
-  transition: transform 220ms var(--ease-out);
+/* Room tiles inside the isometric stage.
+ * The CSS transform lives on the inner .room-tile group so it does not
+ * clobber the outer <g transform="translate(cx cy)"> placement. */
+.office-stage svg .room-tile {
+  transition: transform 200ms var(--ease-out), filter 200ms var(--ease-out);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.office-stage svg .room-tile.clickable {
+  cursor: pointer;
 }
 @media (prefers-reduced-motion: no-preference) {
-  .office-stage svg .ws-group:hover {
-    transform: translateY(-2px);
+  .office-stage svg .room-tile.clickable:hover {
+    transform: translateY(-3px);
+    filter: drop-shadow(0 6px 10px rgba(15, 15, 16, 0.08));
   }
 }
-.office-stage svg .ws-label {
+.office-stage svg .room-label {
   font-family: var(--font-display, "Inter", sans-serif);
   font-size: 11px;
   font-weight: 500;
-  fill: var(--text);
-}
-.office-stage svg .ws-label.muted {
   fill: var(--text-muted);
+  pointer-events: none;
+}
+.office-stage svg .room-label.current {
+  fill: var(--text);
+  font-weight: 600;
+}
+.office-stage svg .room-badge-text {
+  font-family: var(--font-display, "Inter", sans-serif);
+  font-size: 9px;
+  font-weight: 600;
+  fill: #ffffff;
+  pointer-events: none;
+  dominant-baseline: middle;
+}
+
+/* Daily tip card */
+.office-tip {
+  background: var(--bg-subtle);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  padding: 0.75rem 0.9rem;
+  min-width: 0;
+}
+.office-tip-label {
+  margin: 0 0 0.35rem;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.office-tip-body {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+/* Mascot 今日穿搭 card */
+.office-mascot {
+  background: var(--bg-subtle);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  padding: 0.75rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+.office-mascot-label {
+  margin: 0;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  align-self: flex-start;
+}
+.office-mascot-stage {
+  position: relative;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  width: 96px;
+  height: 116px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+}
+.office-mascot-stage:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 4px;
+  border-radius: 12px;
+}
+.office-mascot-stage .mascot-svg {
+  width: 100%;
+  height: 100%;
+  transition: transform 150ms var(--ease-out);
+}
+.office-mascot-stage:hover .mascot-svg {
+  transform: translateY(-2px);
+}
+.office-mascot-caption {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.office-mascot-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(15, 15, 16, 0.08);
+}
+
+/* Mascot easter egg: blink + floating token+1 */
+@keyframes mascot-blink {
+  0%, 100% { transform: scaleY(1); }
+  45%, 55% { transform: scaleY(0.1); }
+}
+.office-mascot-stage.blink .mascot-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mascot-blink 260ms var(--ease-out);
+}
+@keyframes mascot-token-float {
+  0%   { transform: translate(-50%, 0) translateX(var(--dx, 0)); opacity: 0; }
+  20%  { opacity: 1; }
+  100% { transform: translate(-50%, -70px) translateX(var(--dx, 0)); opacity: 0; }
+}
+.mascot-token-float {
+  position: absolute;
+  left: 50%;
+  top: 10%;
+  transform: translate(-50%, 0);
+  font-family: var(--font-display, "Inter", sans-serif);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  pointer-events: none;
+  animation: mascot-token-float 880ms var(--ease-out) forwards;
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .office-stage svg .room-tile.clickable:hover {
+    transform: none;
+  }
+  .office-mascot-stage.blink .mascot-eye {
+    animation: none;
+  }
+  .mascot-token-float {
+    animation-duration: 200ms;
+  }
 }

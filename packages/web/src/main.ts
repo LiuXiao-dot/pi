@@ -462,7 +462,9 @@ function renderWorkspace(
 	officeBtn.title = "Marvis 办公室 — view this room's role roster";
 	officeBtn.onclick = () => {
 		if (!selectedRoomId) return;
-		void showOfficeModal(client, selectedRoomId);
+		void showOfficeModal(client, selectedRoomId, (targetRoomId) => {
+			void selectRoom(targetRoomId);
+		});
 	};
 
 	// Header keeps brand + Roles + Office only. Sign-out moves into the
