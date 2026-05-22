@@ -1419,6 +1419,7 @@ async function generateModels() {
 			baseUrl: "https://api.deepseek.com",
 			provider: "deepseek",
 			reasoning: true,
+			// DeepSeek chat/completions user content is text-only (rejects image_url).
 			input: ["text"],
 			cost: {
 				input: 0.14,
@@ -1437,6 +1438,7 @@ async function generateModels() {
 			baseUrl: "https://api.deepseek.com",
 			provider: "deepseek",
 			reasoning: true,
+			// DeepSeek chat/completions user content is text-only (rejects image_url).
 			input: ["text"],
 			cost: {
 				input: 0.435,
