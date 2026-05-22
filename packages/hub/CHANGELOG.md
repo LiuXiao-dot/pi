@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Role memory directory moved from `.pi/hub/memory/` to `.pi/memory/` so the (project-shared, intended-to-commit) memory store no longer lives under the runtime/transient `.pi/hub/` tree. Existing memory files must be moved manually: `mv .pi/hub/memory .pi/memory`. The room registry (`.pi/hub/rooms.json`), per-room directories (`.pi/hub/rooms/<roomId>/`), and conversation JSONLs continue to live under `.pi/hub/` and should be gitignored by consumers.
+
 ### Fixed
 
 - Prompt queue failures are broadcast to connected clients as `error` events instead of failing silently in the server log only.

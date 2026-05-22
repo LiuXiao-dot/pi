@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { join } from "node:path";
 import type { HubRoleMemory } from "../protocol.ts";
 
-const MEMORY_DIR = ".pi/hub/memory";
+const MEMORY_DIR = ".pi/memory";
 
 function getMemoryDir(cwd: string): string {
 	return join(cwd, MEMORY_DIR);
