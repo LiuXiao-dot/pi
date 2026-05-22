@@ -1,7 +1,0 @@
-{
-  "rules": "按x.ai的风格设计所有页面，不限于配色、排版、布局、交互效果、动画。\n使用中文回答。",
-  "rolesEnabled": true,
-  "roleNames": [
-    "developer"
-  ]
-}

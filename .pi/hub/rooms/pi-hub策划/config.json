@@ -5,6 +5,9 @@
   ],
   "rolesEnabled": true,
   "skills": [
-    "create-skill"
+    "create-skill",
+    "pi-architecture",
+    "pi-hub",
+    "pi-web"
   ]
 }
