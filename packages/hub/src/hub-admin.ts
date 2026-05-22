@@ -16,7 +16,7 @@ import {
 } from "./roles/role-store.ts";
 import { getSkillContent, listSkillFiles } from "./roles/skill-store.ts";
 import type { RoomManager } from "./room-manager.ts";
-import { RoomRegistryError } from "./room-registry.ts";
+import { RoomRegistryError, resolveRoomWorkspace } from "./room-registry.ts";
 import {
 	addRoomRoleName,
 	assertRolesExist,
@@ -62,7 +62,7 @@ export class HubAdmin {
 					await this.handleListRooms(ws, message.id);
 					return;
 				case "create_room":
-					await this.handleCreateRoom(ws, message.roomId, message.title, message.id);
+					await this.handleCreateRoom(ws, message.roomId, message.title, message.workspace, message.id);
 					return;
 				case "delete_room":
 					await this.handleDeleteRoom(ws, message.roomId, message.deleteFiles, message.id);
@@ -95,7 +95,7 @@ export class HubAdmin {
 					await this.handleDeleteRole(ws, message.name, message.id);
 					return;
 				case "list_skills":
-					await this.handleListSkills(ws, message.id);
+					await this.handleListSkills(ws, message.roomId, message.id);
 					return;
 				case "get_skill_content":
 					await this.handleGetSkillContent(ws, message.name, message.id);
@@ -148,9 +148,10 @@ export class HubAdmin {
 		ws: WebSocket,
 		roomId: string,
 		title: string | undefined,
+		workspace: string | undefined,
 		id?: string,
 	): Promise<void> {
-		const entry = this.options.roomManager.createRoom(roomId, title);
+		const entry = this.options.roomManager.createRoom(roomId, title, workspace);
 		const rooms = this.options.roomManager.listRooms().map((e) => ({
 			roomId: e.roomId,
 			title: e.title,
@@ -247,8 +248,11 @@ export class HubAdmin {
 		this.sendCommandResult(ws, "delete_role", id, true);
 	}
 
-	private handleListSkills(ws: WebSocket, id?: string): void {
-		const skills = listSkillFiles({ cwd: this.options.cwd });
+	private handleListSkills(ws: WebSocket, roomId: string | undefined, id?: string): void {
+		const cwd = roomId
+			? resolveRoomWorkspace(this.options.cwd, this.options.roomManager.registry.loadRoomConfig(roomId))
+			: this.options.cwd;
+		const skills = listSkillFiles({ cwd });
 		this.sendCommandResult(ws, "list_skills", id, true, undefined, { skills });
 	}
 

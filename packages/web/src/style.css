@@ -2012,28 +2012,36 @@ select {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  background: rgba(15, 15, 16, 0.45);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 100;
   padding: 1.25rem;
-  animation: fade-in var(--duration-fast) ease both;
+}
+
+body.theme-dark .modal-backdrop {
+  background: rgba(0, 0, 0, 0.6);
 }
 
 .modal {
-  background: var(--bg-raised);
+  background: var(--bg-surface);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   padding: 1.75rem;
   min-width: 320px;
   max-width: 90vw;
-  animation: scale-in var(--duration-normal) var(--ease-spring) both;
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.3),
-    0 16px 48px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .modal {
+    animation: marvis-modal-in 220ms var(--ease-out);
+  }
+  .modal-backdrop {
+    animation: marvis-fade-in 180ms var(--ease-out);
+  }
 }
 
 .modal h3 {
@@ -2823,30 +2831,7 @@ textarea:focus {
   font-style: normal;
 }
 
-/* Modals — soft, animated */
-.modal-backdrop {
-  background: rgba(15, 15, 16, 0.32);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-}
-body.theme-dark .modal-backdrop {
-  background: rgba(0, 0, 0, 0.6);
-}
-.modal {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  color: var(--text);
-}
-@media (prefers-reduced-motion: no-preference) {
-  .modal {
-    animation: marvis-modal-in 220ms var(--ease-out);
-  }
-  .modal-backdrop {
-    animation: marvis-fade-in 180ms var(--ease-out);
-  }
-}
+/* Modal animation keyframes */
 @keyframes marvis-modal-in {
   from { opacity: 0; transform: translateY(8px) scale(0.97); }
   to   { opacity: 1; transform: translateY(0) scale(1); }

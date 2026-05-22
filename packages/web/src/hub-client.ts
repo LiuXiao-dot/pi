@@ -298,12 +298,13 @@ export class HubClient {
 		return data.rooms ?? [];
 	}
 
-	async createRoom(roomId: string, title?: string): Promise<void> {
+	async createRoom(roomId: string, title?: string, workspace?: string): Promise<void> {
 		await this.sendCommand({
 			type: "create_room",
 			token: this.token,
 			roomId,
 			title,
+			workspace,
 		});
 	}
 
@@ -355,10 +356,11 @@ export class HubClient {
 		return data.config ?? {};
 	}
 
-	async listSkills(): Promise<Array<{ name: string; source: string; description?: string }>> {
+	async listSkills(roomId?: string): Promise<Array<{ name: string; source: string; description?: string }>> {
 		const data = await this.sendCommand<{ skills: Array<{ name: string; source: string; description?: string }> }>({
 			type: "list_skills",
 			token: this.token,
+			roomId,
 		});
 		return data.skills ?? [];
 	}

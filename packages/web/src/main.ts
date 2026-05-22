@@ -484,12 +484,14 @@ function renderWorkspace(
 	railHeader.appendChild(Object.assign(el("h2", "room-rail-title"), { textContent: "Rooms" }));
 
 	const roomToolbar = el("div", "room-toolbar");
-	const newRoomInput = el("input") as HTMLInputElement;
-	newRoomInput.placeholder = "new-room-id";
+	const newRoomIdInput = el("input") as HTMLInputElement;
+	newRoomIdInput.placeholder = "new-room-id";
+	const newRoomWsInput = el("input") as HTMLInputElement;
+	newRoomWsInput.placeholder = "workspace (optional, default hub cwd)";
 	const createBtn = el("button", "secondary-btn");
 	createBtn.type = "button";
 	createBtn.textContent = "Create";
-	roomToolbar.append(newRoomInput, createBtn);
+	roomToolbar.append(newRoomIdInput, newRoomWsInput, createBtn);
 
 	const railErr = el("div", "error-banner hidden");
 	const roomList = el("ul", "room-list");
@@ -723,12 +725,14 @@ function renderWorkspace(
 	}
 
 	createBtn.onclick = () => {
-		const id = newRoomInput.value.trim();
+		const id = newRoomIdInput.value.trim();
 		if (!id) return;
 		void (async () => {
 			try {
-				await client.createRoom(id);
-				newRoomInput.value = "";
+				const workspace = newRoomWsInput.value.trim() || undefined;
+				await client.createRoom(id, undefined, workspace);
+				newRoomIdInput.value = "";
+				newRoomWsInput.value = "";
 				await refreshRoomList();
 				await selectRoom(id);
 			} catch (e) {
@@ -1194,7 +1198,7 @@ function renderWorkspace(
 			list.innerHTML = "<p style='padding:0.5rem;color:var(--muted)'>Loading skills...</p>";
 			items.length = 0;
 			client
-				.listSkills()
+				.listSkills(selectedRoomId ?? undefined)
 				.then((skills) => {
 					list.innerHTML = "";
 					if (skills.length === 0) {
@@ -1305,6 +1309,7 @@ function renderWorkspace(
 				const config = await client.getRoomConfig(selectedRoomId!);
 				selectedSkills = config.skills ?? [];
 				renderRoomSkillChips();
+				wsInput.value = config.workspace ?? "";
 			})();
 		}
 
@@ -1334,6 +1339,15 @@ function renderWorkspace(
 		const rolesEnabledLabel = el("label", "config-field config-checkbox");
 		rolesEnabledLabel.append(rolesCb, document.createTextNode(" Enable roles in this room"));
 		cfgSection.appendChild(rolesEnabledLabel);
+
+		// Workspace (read-only)
+		const wsLabel = el("label", "config-field");
+		wsLabel.textContent = "Workspace";
+		const wsInput = el("input") as HTMLInputElement;
+		wsInput.readOnly = true;
+		wsInput.placeholder = "(default — same as hub cwd)";
+		wsLabel.appendChild(wsInput);
+		cfgSection.appendChild(wsLabel);
 
 		modal.appendChild(cfgSection);
 

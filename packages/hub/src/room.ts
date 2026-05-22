@@ -298,6 +298,7 @@ export class Room {
 			roomId: this.roomId,
 			state: buildSessionState(this.session),
 			messages: this.session.messages,
+			workspace: this.cwd,
 		});
 		this.send(client, {
 			type: "queue_update",
@@ -445,6 +446,7 @@ export class Room {
 					roomId: this.roomId,
 					state: buildSessionState(this.session),
 					messages: this.session.messages,
+					workspace: this.cwd,
 				});
 				this.sendCommandResult(client, "get_state", message.id, true);
 				return;
@@ -748,6 +750,7 @@ export class Room {
 				roomId: this.roomId,
 				state: buildSessionState(this.session),
 				messages: [],
+				workspace: this.cwd,
 			});
 		}
 	}

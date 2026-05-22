@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { prepareRoomConfigPatch, type ValidateRoomRolesOptions } from "./room-roles.ts";
 
 const MAX_ROOM_ID_LENGTH = 64;
@@ -22,6 +22,9 @@ export interface RoomConfigFile {
 	rules?: string;
 	roleOverrides?: Record<string, RoomRoleOverride>;
 	rolesEnabled?: boolean;
+	/** Absolute path to the workspace root for agent tools in this room.
+	 *  Set at creation time; immutable afterwards. */
+	workspace?: string;
 }
 
 export interface RoomIndexEntry {
@@ -53,6 +56,16 @@ function mergeRoomConfigSimple(patch: RoomConfigFile, current: RoomConfigFile): 
 		...patch,
 		roleOverrides: patch.roleOverrides !== undefined ? patch.roleOverrides : current.roleOverrides,
 	};
+}
+
+/** Resolve the effective workspace for a room.
+ *  If the room config has a workspace, it is used (already absolute from creation).
+ *  Otherwise, defaults to the hub cwd. */
+export function resolveRoomWorkspace(hubCwd: string, config: RoomConfigFile): string {
+	if (config.workspace && isAbsolute(config.workspace)) {
+		return config.workspace;
+	}
+	return resolve(hubCwd);
 }
 
 export function validateRoomId(roomId: string): string {
@@ -142,7 +155,7 @@ export class RoomRegistry {
 	}
 
 	/** Create registry entry and room directory. Does not create session file until resolveSessionPath. */
-	createRoom(roomId: string, options?: { title?: string }): RoomIndexEntry {
+	createRoom(roomId: string, options?: { title?: string; workspace?: string }): RoomIndexEntry {
 		const id = validateRoomId(roomId);
 		const index = this.readIndex();
 		if (index.rooms.some((r) => r.roomId === id)) {
@@ -161,9 +174,15 @@ export class RoomRegistry {
 
 		const dir = this.roomDir(id);
 		mkdirSync(dir, { recursive: true });
-		if (!existsSync(join(dir, CONFIG_FILENAME))) {
-			writeFileSync(join(dir, CONFIG_FILENAME), "{}\n", "utf8");
+
+		// Write initial config.json with optional workspace (validated and resolved).
+		const config: RoomConfigFile = {};
+		const rawWorkspace = options?.workspace?.trim();
+		if (rawWorkspace) {
+			const resolvedWorkspace = resolve(rawWorkspace);
+			config.workspace = resolvedWorkspace;
 		}
+		writeFileSync(join(dir, CONFIG_FILENAME), `${JSON.stringify(config, null, 2)}\n`, "utf8");
 
 		index.rooms.push(entry);
 		this.writeIndex(index);
@@ -267,7 +286,20 @@ export class RoomRegistry {
 		const dir = this.roomDir(id);
 		mkdirSync(dir, { recursive: true });
 		const current = this.loadRoomConfig(id);
+
+		// Workspace is immutable: reject any attempt to change it.
+		if (patch.workspace !== undefined && patch.workspace !== current.workspace) {
+			throw new RoomRegistryError(
+				"Workspace is immutable and cannot be changed after room creation.",
+				"workspace_immutable",
+			);
+		}
+
 		const merged = options ? prepareRoomConfigPatch(patch, current, options) : mergeRoomConfigSimple(patch, current);
+		// Always preserve the original workspace value.
+		if (current.workspace !== undefined) {
+			merged.workspace = current.workspace;
+		}
 		writeFileSync(join(dir, CONFIG_FILENAME), `${JSON.stringify(merged, null, 2)}\n`, "utf8");
 		this.touchRoom(id);
 		return merged;

@@ -110,6 +110,8 @@ export interface HubRoomConfigPayload {
 	rules?: string;
 	roleOverrides?: Record<string, HubRoomRoleOverridePayload>;
 	rolesEnabled?: boolean;
+	/** Immutable after room creation. */
+	workspace?: string;
 }
 
 export interface HubRoleSummaryPayload {

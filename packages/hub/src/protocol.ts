@@ -59,7 +59,7 @@ export type HubExtensionUIResponse =
 /** Hub-scoped commands (token required; no join). */
 export type HubScopedClientMessage =
 	| { type: "list_rooms"; token: string; id?: string }
-	| { type: "create_room"; token: string; roomId: string; title?: string; id?: string }
+	| { type: "create_room"; token: string; roomId: string; title?: string; workspace?: string; id?: string }
 	| { type: "delete_room"; token: string; roomId: string; deleteFiles?: boolean; id?: string }
 	| { type: "get_room_config"; token: string; roomId: string; id?: string }
 	| {
@@ -76,7 +76,7 @@ export type HubScopedClientMessage =
 	| { type: "add_room_role"; token: string; roomId: string; roleName: string; id?: string }
 	| { type: "remove_room_role"; token: string; roomId: string; roleName: string; id?: string }
 	| { type: "set_room_roles"; token: string; roomId: string; roleNames: string[]; id?: string }
-	| { type: "list_skills"; token: string; id?: string }
+	| { type: "list_skills"; token: string; roomId?: string; id?: string }
 	| { type: "get_skill_content"; token: string; name: string; id?: string }
 	| { type: "clear_room_session"; token: string; roomId: string; id?: string }
 	| { type: "sleep_room"; token: string; roomId: string; id?: string }
@@ -165,6 +165,8 @@ export interface HubJoined {
 	roomId: string;
 	state: RpcSessionState;
 	messages: unknown[];
+	/** Resolved absolute workspace path for this room. */
+	workspace?: string;
 }
 
 export interface HubLeft {
@@ -300,6 +302,8 @@ export interface HubRoomConfigPayload {
 	rules?: string;
 	roleOverrides?: Record<string, HubRoomRoleOverridePayload>;
 	rolesEnabled?: boolean;
+	/** Immutable after room creation. Read-only on the client. */
+	workspace?: string;
 }
 
 export interface HubRoleSummaryPayload {

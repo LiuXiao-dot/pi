@@ -11,7 +11,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ResolvedHubModelsConfig, ResolvedHubRolesConfig } from "./config.ts";
 import { Room } from "./room.ts";
-import { RoomRegistry, RoomRegistryError } from "./room-registry.ts";
+import { RoomRegistry, RoomRegistryError, resolveRoomWorkspace } from "./room-registry.ts";
 
 export interface RoomManagerOptions {
 	cwd: string;
@@ -51,8 +51,8 @@ export class RoomManager {
 		return this.registry.listRooms();
 	}
 
-	createRoom(roomId: string, title?: string) {
-		return this.registry.createRoom(roomId, { title });
+	createRoom(roomId: string, title?: string, workspace?: string) {
+		return this.registry.createRoom(roomId, { title, workspace });
 	}
 
 	async deleteRoom(roomId: string, options?: { deleteFiles?: boolean }): Promise<void> {
@@ -105,10 +105,11 @@ export class RoomManager {
 	private async createRoomInstance(roomId: string): Promise<Room> {
 		const sessionResult = await this.createSessionForRoom(roomId);
 		const roomConfig = this.registry.loadRoomConfig(roomId);
+		const workspace = resolveRoomWorkspace(this.options.cwd, roomConfig);
 		const room = new Room({
 			roomId,
 			sessionResult,
-			cwd: resolve(this.options.cwd),
+			cwd: workspace,
 			rolesConfig: this.options.rolesConfig,
 			modelsConfig: this.options.modelsConfig,
 			roomConfig,
@@ -120,21 +121,23 @@ export class RoomManager {
 	}
 
 	private async createSessionForRoom(roomId: string): Promise<CreateAgentSessionResult> {
-		const cwd = resolve(this.options.cwd);
+		const hubCwd = resolve(this.options.cwd);
+		const roomConfig = this.registry.loadRoomConfig(roomId);
 		const agentDir = this.options.agentDir ?? getAgentDir();
+		const workspace = resolveRoomWorkspace(hubCwd, roomConfig);
 
 		if (this.options.createSession) {
 			const sessionFile = this.registry.getSessionPath(roomId);
-			return this.options.createSession(roomId, cwd, agentDir, sessionFile);
+			return this.options.createSession(roomId, workspace, agentDir, sessionFile);
 		}
 
 		if (this.options.sessionPath) {
 			const sessionFile = resolve(this.options.sessionPath);
-			const sessionManager = SessionManager.open(sessionFile, undefined, cwd);
+			const sessionManager = SessionManager.open(sessionFile, undefined, workspace);
 			const authStorage = AuthStorage.create(agentDir ? join(agentDir, "auth.json") : undefined);
 			const modelRegistry = ModelRegistry.create(authStorage, agentDir ? join(agentDir, "models.json") : undefined);
 			return createAgentSession({
-				cwd,
+				cwd: workspace,
 				agentDir,
 				authStorage,
 				modelRegistry,
@@ -147,22 +150,17 @@ export class RoomManager {
 
 		let sessionManager: SessionManager;
 		if (hasSessionContent(sessionFile)) {
-			sessionManager = SessionManager.open(sessionFile, undefined, cwd);
+			sessionManager = SessionManager.open(sessionFile, undefined, workspace);
 		} else {
-			// Self-heal: the registry's sessionFile is missing or empty (e.g. a
-			// rebirth/sleep rotated the session but never wrote the new path back
-			// to the registry, leaving an orphan jsonl in the same directory).
-			// Prefer the most recently modified valid session file in the room
-			// directory before giving up and creating a brand-new empty session.
 			const recovered = existsSync(sessionDir) ? findMostRecentSession(sessionDir) : null;
 			if (recovered) {
 				console.warn(
 					`[pi-hub] room ${roomId}: registry sessionFile missing (${sessionFile}); recovering most recent session ${recovered}`,
 				);
-				sessionManager = SessionManager.open(recovered, undefined, cwd);
+				sessionManager = SessionManager.open(recovered, undefined, workspace);
 				this.registry.updateSessionFile(roomId, recovered);
 			} else {
-				sessionManager = SessionManager.create(cwd, sessionDir);
+				sessionManager = SessionManager.create(workspace, sessionDir);
 				const actualFile = sessionManager.getSessionFile();
 				if (actualFile && actualFile !== sessionFile) {
 					this.registry.updateSessionFile(roomId, actualFile);
@@ -174,7 +172,7 @@ export class RoomManager {
 		const modelRegistry = ModelRegistry.create(authStorage, agentDir ? join(agentDir, "models.json") : undefined);
 
 		return createAgentSession({
-			cwd,
+			cwd: workspace,
 			agentDir,
 			authStorage,
 			modelRegistry,
