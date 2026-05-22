@@ -4,26 +4,14 @@
       "roomId": "default",
       "title": "Default",
       "createdAt": "2026-05-21T14:43:52.180Z",
-      "updatedAt": "2026-05-22T03:43:16.586Z",
-      "sessionFile": ".pi/hub/rooms/default/2026-05-22T03-43-16-585Z_019e4dc7-be69-7657-b50d-71a9b0879367.jsonl"
+      "updatedAt": "2026-05-22T03:57:09.433Z",
+      "sessionFile": ".pi/hub/rooms/default/2026-05-22T03-57-09-433Z_019e4dd4-73b8-7079-950b-aa829480d8a2.jsonl"
     },
     {
-      "roomId": "pi-hub功能",
-      "createdAt": "2026-05-21T15:27:00.729Z",
-      "updatedAt": "2026-05-21T18:54:18.579Z",
-      "sessionFile": ".pi/hub/rooms/pi-hub功能/2026-05-21T17-45-39-729Z_019e4ba4-9c91-74df-bc50-83727f54e466.jsonl"
-    },
-    {
-      "roomId": "pi-hub策划",
-      "createdAt": "2026-05-21T15:47:50.522Z",
-      "updatedAt": "2026-05-22T01:34:27.749Z",
-      "sessionFile": ".pi/hub/rooms/pi-hub策划/2026-05-21T15-47-50-528Z_019e4b38-be80-76f0-b169-b58ba7461138.jsonl"
-    },
-    {
-      "roomId": "pi-hub策划2",
-      "createdAt": "2026-05-22T01:41:35.387Z",
-      "updatedAt": "2026-05-22T01:41:47.198Z",
-      "sessionFile": ".pi/hub/rooms/pi-hub策划2/2026-05-22T01-41-35-398Z_019e4d58-5626-7dd7-9cae-7ba027d850da.jsonl"
+      "roomId": "pi-hub-seer",
+      "createdAt": "2026-05-22T03:57:50.625Z",
+      "updatedAt": "2026-05-22T04:21:20.683Z",
+      "sessionFile": ".pi/hub/rooms/pi-hub-seer/2026-05-22T03-57-50-644Z_019e4dd5-14b4-7612-9910-7435ab59e2b4.jsonl"
     }
   ]
 }
