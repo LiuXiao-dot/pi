@@ -284,6 +284,14 @@ interface ReplyEntry {
 	events: unknown[];
 	startedAt: number;
 	endedAt?: number;
+	/**
+	 * Original user prompt text for `kind === "session"` entries. Used by
+	 * `renderRoomStatusBoard` to interleave the user bubble with its status row
+	 * in chronological order, so the prior "all bubbles, then all status rows"
+	 * layout no longer separates a turn's question from its result.
+	 */
+	userText?: string;
+	userMeta?: string;
 }
 
 function truncateSummary(text: string, max = 80): string {
@@ -1786,7 +1794,6 @@ function renderWorkspace(
 	let roomAssignedRoles: string[] = [];
 	const replyStore = new Map<string, ReplyEntry>();
 	const roomReplies = new Map<string, string[]>();
-	const roomUserMessages = new Map<string, Array<{ text: string; meta: string }>>();
 	const roomTitleById = new Map<string, string>();
 	let activeReplyId: string | null = null;
 	let currentTurnId: string | null = null;
@@ -1809,7 +1816,6 @@ function renderWorkspace(
 			replyStore.delete(id);
 		}
 		roomReplies.delete(roomId);
-		roomUserMessages.delete(roomId);
 		const active = activeReplyId ? replyStore.get(activeReplyId) : undefined;
 		if (active?.roomId === roomId) {
 			activeReplyId = null;
@@ -1989,14 +1995,23 @@ function renderWorkspace(
 		lastMetaHost = null;
 		toolMsgMap = new Map();
 
-		for (const um of roomUserMessages.get(selectedRoomId) ?? []) {
-			appendMessage("user", um.text, um.meta, false);
-		}
-
+		// Walk reply entries in chronological order (by startedAt). For each
+		// `kind: "session"` entry that carries the original user prompt, render
+		// the user bubble immediately above its status row so a turn's question
+		// and the resulting status sit next to each other instead of being split
+		// into a top "all user bubbles" block and a bottom "all status rows"
+		// block.
 		const rids = roomReplies.get(selectedRoomId) ?? [];
-		for (const rid of rids) {
-			const entry = replyStore.get(rid);
-			if (!entry) continue;
+		const entries = rids
+			.map((rid) => replyStore.get(rid))
+			.filter((e): e is ReplyEntry => !!e)
+			.slice()
+			.sort((a, b) => a.startedAt - b.startedAt);
+
+		for (const entry of entries) {
+			if (entry.kind === "session" && entry.userText) {
+				appendMessage("user", entry.userText, entry.userMeta ?? session.displayName, false);
+			}
 			const row = el("button", `room-status-row ${entry.phase}`);
 			row.type = "button";
 			row.setAttribute("data-status-reply-id", entry.id);
@@ -3063,8 +3078,6 @@ function renderWorkspace(
 	}
 
 	function ingestJoinHistory(roomId: string, msgs: unknown[]): void {
-		const users: Array<{ text: string; meta: string }> = [];
-
 		// Drop any reply entries we previously synthesized from history; live
 		// (event-driven) entries keep their ids and are preserved.
 		const HIST_PREFIX_SESSION = `session:${roomId}:hist-`;
@@ -3135,7 +3148,6 @@ function renderWorkspace(
 			}
 
 			if (m.role === "user") {
-				users.push({ text: getMessageText(msg), meta: session.displayName });
 				openSession = { kind: "session", messages: [msg], userText: getMessageText(msg), ts };
 				groups.push(openSession);
 				continue;
@@ -3152,7 +3164,9 @@ function renderWorkspace(
 			// present in the underlying session on the server.
 		}
 
-		roomUserMessages.set(roomId, users);
+		// Note: each session-kind entry now carries `userText` directly so that
+		// `renderRoomStatusBoard` can interleave the user bubble with its status
+		// row in chronological order; no separate user-bubble registry is needed.
 
 		// Synthesize ReplyEntry objects for each group.
 		const histIds: string[] = [];
@@ -3184,6 +3198,8 @@ function renderWorkspace(
 					events: [],
 					startedAt: g.ts,
 					endedAt: g.ts,
+					userText: g.userText || undefined,
+					userMeta: g.userText ? session.displayName : undefined,
 				});
 				histIds.push(rid);
 			} else if (g.kind === "role") {
@@ -3457,12 +3473,10 @@ function renderWorkspace(
 			messages: [],
 			events: [],
 			startedAt: Date.now(),
+			userText: displayText,
+			userMeta: session.displayName,
 		});
 		appendReplyId(roomId, sid);
-
-		const users = roomUserMessages.get(roomId) ?? [];
-		users.push({ text: displayText, meta: session.displayName });
-		roomUserMessages.set(roomId, users);
 
 		activeReplyId = null;
 		refreshMessagesPanel();
