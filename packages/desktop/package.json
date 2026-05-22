@@ -1,0 +1,33 @@
+{
+	"name": "@earendil-works/pi-desktop",
+	"version": "0.75.3",
+	"description": "Desktop app for pi Hub — LAN collaborative coding agent with Web UI",
+	"private": true,
+	"type": "module",
+	"main": "dist/main.js",
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "node scripts/build.mjs",
+		"start": "electron .",
+		"dist": "electron-builder",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"dependencies": {
+		"@earendil-works/pi-hub": "^0.75.3",
+		"electron-updater": "6.6.2"
+	},
+	"devDependencies": {
+		"@types/node": "22.19.19",
+		"electron": "42.0.0",
+		"electron-builder": "26.6.0",
+		"esbuild": "0.28.0",
+		"shx": "0.4.0",
+		"typescript": "5.9.3"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/earendil-works/pi-mono.git",
+		"directory": "packages/desktop"
+	}
+}

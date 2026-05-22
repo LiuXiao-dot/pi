@@ -1,0 +1,32 @@
+appId: dev.pi.hub
+productName: pi-hub
+copyright: "MIT"
+
+directories:
+  output: release
+  buildResources: src/assets
+
+files:
+  - dist/**/*
+  - node_modules/**/*
+  - package.json
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  signingHashAlgorithms: []
+  signAndEditExecutable: false
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: pi Hub
+
+publish:
+  provider: github
+  owner: earendil-works
+  repo: pi-mono
