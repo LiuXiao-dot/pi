@@ -162,44 +162,91 @@ function getMessageText(message: unknown): string {
 	return "";
 }
 
+type AssistantContentPart = { type: string; name?: string; text?: string };
+
 type AssistantMessageMeta = {
 	text: string;
 	stopReason?: string;
 	errorMessage?: string;
+	content: AssistantContentPart[];
 };
 
 function getAssistantMessageMeta(message: unknown): AssistantMessageMeta {
 	const text = getMessageText(message);
 	if (!message || typeof message !== "object") {
-		return { text };
+		return { text, content: [] };
 	}
-	const m = message as { stopReason?: string; errorMessage?: string };
-	return { text, stopReason: m.stopReason, errorMessage: m.errorMessage };
+	const m = message as { stopReason?: string; errorMessage?: string; content?: unknown };
+	const content = Array.isArray(m.content) ? (m.content as AssistantContentPart[]) : [];
+	return { text, stopReason: m.stopReason, errorMessage: m.errorMessage, content };
 }
 
 type AssistantDisplay = {
 	displayText: string;
 	isFailed: boolean;
 	bannerMessage?: string;
+	// True when this assistant message represents an intermediate step
+	// (tool calls / pure thinking) that should not produce a main bubble.
+	suppressBubble?: boolean;
 };
 
 function formatAssistantDisplay(meta: AssistantMessageMeta): AssistantDisplay {
 	const text = meta.text.trim();
-	if (text) {
-		return { displayText: meta.text, isFailed: false };
-	}
 	const errMsg = meta.errorMessage?.trim();
 	const stop = meta.stopReason;
+	const toolCalls = meta.content.filter((c) => c.type === "toolCall");
+	const hasThinking = meta.content.some((c) => c.type === "thinking");
+
+	// 1. Real error / abort: keep behavior
 	if (stop === "error" || stop === "aborted") {
 		const label = stop === "aborted" ? "Aborted" : "Error";
 		const detail = errMsg ? simplifyProviderError(errMsg) : "The request ended without a response.";
-		const displayText = `${label}: ${detail}`;
-		return { displayText, isFailed: true, bannerMessage: displayText };
+		const displayText = text || `${label}: ${detail}`;
+		return { displayText, isFailed: true, bannerMessage: `${label}: ${detail}` };
 	}
+
+	// 2. Tool-use step: model handed off to tools. Not a failure; suppress bubble
+	//    when there is no accompanying text (the tool cards / activity row already
+	//    convey the state).
+	if (stop === "toolUse") {
+		if (text) {
+			return { displayText: meta.text, isFailed: false };
+		}
+		const names = toolCalls.map((c) => c.name).filter((n): n is string => !!n);
+		return {
+			displayText: names.length ? `调用工具：${names.join(", ")}` : "",
+			isFailed: false,
+			suppressBubble: true,
+		};
+	}
+
+	// 3. Normal text
+	if (text) {
+		return { displayText: meta.text, isFailed: false };
+	}
+
+	// 4. No text but has tool calls (some providers emit toolUse content with stop==="stop")
+	if (toolCalls.length > 0) {
+		const names = toolCalls.map((c) => c.name).filter((n): n is string => !!n);
+		return {
+			displayText: names.length ? `调用工具：${names.join(", ")}` : "",
+			isFailed: false,
+			suppressBubble: true,
+		};
+	}
+
+	// 5. Pure thinking with no visible text: suppress bubble; activity row shows it.
+	if (hasThinking) {
+		return { displayText: "", isFailed: false, suppressBubble: true };
+	}
+
+	// 6. Non-fatal provider message (errorMessage but stop !== error/aborted)
 	if (errMsg) {
 		const detail = simplifyProviderError(errMsg);
 		return { displayText: detail, isFailed: true, bannerMessage: detail };
 	}
+
+	// 7. Genuine empty response
 	const displayText = "(No response from model)";
 	return {
 		displayText,
@@ -1820,6 +1867,7 @@ function renderWorkspace(
 				appendMessage("user", getMessageText(msg), undefined, false);
 			} else if (m.role === "assistant") {
 				const assistant = formatAssistantDisplay(getAssistantMessageMeta(msg));
+				if (assistant.suppressBubble) continue;
 				appendCollapsibleAssistantMsg(assistant.displayText, false, undefined, false, assistant.isFailed);
 			} else if (m.role === "custom") {
 				const div = el("div", `msg ${messageRoleClass(m)}`);
@@ -2555,13 +2603,14 @@ function renderWorkspace(
 			const m = event.message as { role?: string };
 			if (m.role === "assistant") {
 				const assistant = formatAssistantDisplay(getAssistantMessageMeta(event.message));
-				if (sessionEntry) {
+				// P2: do not pollute session summary with intermediate (tool/thinking) steps
+				if (sessionEntry && !assistant.suppressBubble) {
 					upsertSessionReplyPartialText(sessionEntry, assistant.displayText);
 					if (statusView) {
 						updateStatusRowElement(sessionEntry);
 					}
 				}
-				if (detailActive) {
+				if (detailActive && !assistant.suppressBubble) {
 					if (!streamingAssistantEl && assistant.displayText.trim()) {
 						streamingAssistantEl = appendCollapsibleAssistantMsg(
 							assistant.displayText,
@@ -2580,7 +2629,8 @@ function renderWorkspace(
 			const m = event.message as { role?: string };
 			if (m.role === "assistant") {
 				const assistant = formatAssistantDisplay(getAssistantMessageMeta(event.message));
-				if (sessionEntry) {
+				// P2: only user-visible final assistant messages mutate session summary/phase.
+				if (sessionEntry && !assistant.suppressBubble) {
 					upsertSessionReplyPartialText(sessionEntry, assistant.displayText);
 					if (assistant.isFailed) {
 						sessionEntry.phase = "failed";
@@ -2590,7 +2640,13 @@ function renderWorkspace(
 						updateStatusRowElement(sessionEntry);
 					}
 				}
-				if (detailActive) {
+				// P1: tool-call / pure-thinking steps must not create a main bubble
+				// nor flash a red error banner.
+				if (assistant.suppressBubble) {
+					if (streamingAssistantEl) {
+						finalizeCollapsibleAssistantMsg(streamingAssistantEl);
+					}
+				} else if (detailActive) {
 					if (!streamingAssistantEl) {
 						streamingAssistantEl = appendCollapsibleAssistantMsg(
 							assistant.displayText,
@@ -2602,13 +2658,13 @@ function renderWorkspace(
 					} else {
 						updateStreamingAssistant(event.message, hostDisplayName);
 					}
-					if (assistant.bannerMessage) {
+					if (assistant.bannerMessage && assistant.isFailed) {
 						showError(assistant.bannerMessage);
 					}
 					if (streamingAssistantEl) {
 						finalizeCollapsibleAssistantMsg(streamingAssistantEl);
 					}
-				} else if (assistant.bannerMessage) {
+				} else if (assistant.bannerMessage && assistant.isFailed) {
 					showError(assistant.bannerMessage);
 				}
 				streamingAssistantEl = null;
@@ -2619,9 +2675,10 @@ function renderWorkspace(
 		if (event.type === "agent_end" && Array.isArray(event.messages)) {
 			updateTokenStats(event.messages);
 			if (sessionEntry) {
+				// P2: pick last assistant with non-empty visible text; skip pure tool/thinking steps.
 				const lastAssistant = [...event.messages]
 					.reverse()
-					.find((m) => (m as { role?: string }).role === "assistant");
+					.find((m) => (m as { role?: string }).role === "assistant" && getMessageText(m).trim().length > 0);
 				sessionEntry.phase = "done";
 				sessionEntry.messages = event.messages;
 				sessionEntry.summary = truncateSummary(getMessageText(lastAssistant ?? {}));
