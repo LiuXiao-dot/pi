@@ -155,7 +155,15 @@ export interface HubSleepProgressMessage extends HubServerMessage {
 export interface HubSleepDoneMessage extends HubServerMessage {
 	type: "sleep_done";
 	roomId: string;
+	success: boolean;
 	memories: HubRoleMemory[];
+	error?: string;
+}
+
+export interface HubRoomSessionCleared extends HubServerMessage {
+	type: "room_session_cleared";
+	roomId: string;
+	reason: "rebirth" | "sleep";
 }
 
 export interface HubRoleMemory {

@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
+import { loadRecentRoleMemory } from "./memory-store.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
 import type { ResolvedRoleConfig } from "./resolve-config.ts";
 import { resolveSkillPaths } from "./resolve-skills.ts";
@@ -17,6 +18,11 @@ export interface RunRoleOptions {
 	contextPrefix?: string;
 	signal?: AbortSignal;
 	roomSkillsDir?: string;
+	/**
+	 * Maximum number of recent persisted memories (from sleep) to inject into
+	 * the role's context. Defaults to 10. Set to 0 to disable.
+	 */
+	memoryLimit?: number;
 }
 
 export interface RunRoleResult {
@@ -24,6 +30,18 @@ export interface RunRoleResult {
 	output: string;
 	stderr: string;
 	errorMessage?: string;
+}
+
+/**
+ * Format recent role memories as a context-prefix block. Returns undefined when
+ * the role has no memories so callers do not append empty sections.
+ */
+function formatMemoryContext(cwd: string, roleName: string, limit: number): string | undefined {
+	if (limit <= 0) return undefined;
+	const recent = loadRecentRoleMemory(cwd, roleName, limit);
+	if (recent.length === 0) return undefined;
+	const lines = recent.map((m) => `- (${m.ts}) goal: ${m.goal}\n  result: ${m.result}`);
+	return `Long-term memory for role "${roleName}" (most recent ${recent.length}, oldest first):\n${lines.join("\n")}`;
 }
 
 function getFinalAssistantText(messages: Message[]): string {
@@ -63,7 +81,7 @@ function resolveAppendSystemPrompt(role: RoleConfig | ResolvedRoleConfig): strin
 }
 
 export async function runRoleSubprocess(options: RunRoleOptions): Promise<RunRoleResult> {
-	const { role, task, cwd, agentDir, contextPrefix, signal, roomSkillsDir } = options;
+	const { role, task, cwd, agentDir, contextPrefix, signal, roomSkillsDir, memoryLimit } = options;
 
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
 	if (role.model) {
@@ -97,7 +115,11 @@ export async function runRoleSubprocess(options: RunRoleOptions): Promise<RunRol
 			args.push("--append-system-prompt", tmpAppendPath);
 		}
 
-		const userTask = contextPrefix ? `${contextPrefix}\n\nTask: ${task}` : `Task: ${task}`;
+		const memoryContext = formatMemoryContext(cwd, role.name, memoryLimit ?? 10);
+		const combinedPrefix = [memoryContext, contextPrefix]
+			.filter((p): p is string => !!p && p.length > 0)
+			.join("\n\n");
+		const userTask = combinedPrefix ? `${combinedPrefix}\n\nTask: ${task}` : `Task: ${task}`;
 		args.push(userTask);
 
 		const invocation = getPiInvocation(args);

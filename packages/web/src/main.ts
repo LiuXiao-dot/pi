@@ -808,6 +808,12 @@ function renderWorkspace(
 		e.stopPropagation();
 		lifePopup.classList.add("hidden");
 		if (!selectedRoomId || !client.isJoined() || !canSleep()) return;
+		if (
+			!confirm(
+				"Sleep this room?\n\nThis extracts role outputs into long-term memory and then clears the current conversation. The action cannot be undone.",
+			)
+		)
+			return;
 		void (async () => {
 			try {
 				isSleeping = true;
@@ -892,6 +898,11 @@ function renderWorkspace(
 
 	const err = el("div", "error-banner hidden");
 	panel.appendChild(err);
+
+	// Neutral / success banner used for sleep results and similar non-error notices.
+	const info = el("div", "info-banner hidden");
+	panel.appendChild(info);
+	let infoHideTimer: ReturnType<typeof setTimeout> | null = null;
 
 	const messages = el("div", "messages");
 	panel.appendChild(messages);
@@ -2207,6 +2218,18 @@ function renderWorkspace(
 		err.classList.remove("hidden");
 	}
 
+	function showInfo(message: string, durationMs = 5000): void {
+		info.textContent = message;
+		info.classList.remove("hidden");
+		if (infoHideTimer) clearTimeout(infoHideTimer);
+		if (durationMs > 0) {
+			infoHideTimer = setTimeout(() => {
+				info.classList.add("hidden");
+				infoHideTimer = null;
+			}, durationMs);
+		}
+	}
+
 	function assistantMetaLabel(host?: string | null): string | undefined {
 		return host ?? turnHostName ?? undefined;
 	}
@@ -3111,15 +3134,30 @@ function renderWorkspace(
 		if (msg.type === "sleep_done") {
 			isSleeping = false;
 			updateSleepButton();
-			const memories = (msg.memories as HubRoleMemory[]) ?? [];
-			const count = memories.length;
-			if (count > 0) {
+			const payload = msg as { success?: boolean; error?: string; memories?: HubRoleMemory[] };
+			const memories = payload.memories ?? [];
+			const success = payload.success !== false; // default true for backwards compat with older servers
+			if (!success) {
+				showError(payload.error ? `Sleep failed: ${payload.error}` : "Sleep failed.");
+			} else if (memories.length > 0) {
 				const roles = [...new Set(memories.map((m) => m.roleName))];
-				showError(`Stored ${count} memories for roles: ${roles.join(", ")}`);
+				showInfo(`Stored ${memories.length} memories for roles: ${roles.join(", ")}`);
 			} else {
-				showError("No memories extracted from this session.");
+				showInfo("No memories extracted from this session.");
 			}
-			// Messages are cleared server-side, client will receive updated state via joined or state_update
+			// Messages are cleared server-side; clients will receive joined + room_session_cleared.
+		}
+		if (msg.type === "room_session_cleared") {
+			const rid = (msg as { roomId?: string }).roomId;
+			if (rid) {
+				purgeRoomReplies(rid);
+				if (rid === selectedRoomId) {
+					activeReplyId = null;
+					currentTurnId = null;
+					refreshMessagesPanel();
+					updateRoomReplyRows();
+				}
+			}
 		}
 		if (msg.type === "extension_ui_request") {
 			showExtensionModal(msg);

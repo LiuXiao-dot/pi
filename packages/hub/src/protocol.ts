@@ -352,7 +352,22 @@ export interface HubSleepProgressMessage {
 export interface HubSleepDoneMessage {
 	type: "sleep_done";
 	roomId: string;
+	/** True if memories were extracted/stored successfully. False on failure or refusal (e.g. room busy). */
+	success: boolean;
 	memories: HubRoleMemory[];
+	/** Human-readable error message when success === false. */
+	error?: string;
+}
+
+/**
+ * Broadcast to every client in a room when the room's session.messages have been
+ * cleared (rebirth or sleep). Clients should drop any local reply / turn indices
+ * that referenced the now-purged messages.
+ */
+export interface HubRoomSessionCleared {
+	type: "room_session_cleared";
+	roomId: string;
+	reason: "rebirth" | "sleep";
 }
 
 export interface HubRoleMemory {
@@ -386,4 +401,5 @@ export type HubServerMessage =
 	| HubRoomDeleted
 	| HubSleepProgressMessage
 	| HubSleepDoneMessage
+	| HubRoomSessionCleared
 	| HubError;

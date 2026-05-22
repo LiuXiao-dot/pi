@@ -267,11 +267,24 @@ export class HubAdmin {
 			this.sendCommandResult(ws, "clear_room_session", id, false, `Room "${roomId}" not active`);
 			return;
 		}
+		// In-flight protection: refuse rebirth while the room is replying / sleeping.
+		if (room.isBusy()) {
+			this.sendCommandResult(
+				ws,
+				"clear_room_session",
+				id,
+				false,
+				"Room is busy (replying, compacting, or sleeping). Wait for the current turn to finish.",
+			);
+			return;
+		}
 		// Clear messages and reset session state
 		room.session.agent.reset();
 		room.session.sessionManager.newSession();
-		// Notify all clients in the room with empty messages
+		// Notify all clients in the room with empty messages, then broadcast a
+		// session-cleared event so every client purges its local reply / turn cache.
 		room.sendClientUpdate();
+		room.broadcastMessage({ type: "room_session_cleared", roomId, reason: "rebirth" });
 		this.sendCommandResult(ws, "clear_room_session", id, true);
 	}
 
@@ -281,72 +294,113 @@ export class HubAdmin {
 			this.sendCommandResult(ws, "sleep_room", id, false, `Room "${roomId}" not active`);
 			return;
 		}
-
-		const messages = room.session.messages;
-		const extracted: Array<{ ts: string; room: string; goal: string; result: string; roleName: string }> = [];
-
-		// Phase 1: extracting
-		room.broadcastMessage({ type: "sleep_progress", roomId, phase: "extracting" });
-
-		// Find hub_role_output custom messages grouped by role
-		for (const msg of messages) {
-			if (msg.role !== "custom") continue;
-			const cm = msg as { customType?: string; content?: string; details?: Record<string, unknown> };
-			if (cm.customType !== "hub_role_output" || !cm.details?.role) continue;
-			const roleName = cm.details.role as string;
-			const output = (cm.content as string) ?? "";
-			if (!output.trim()) continue;
-
-			const goalLine = output.match(/Task:\s*(.+?)(?:\n|$)/);
-			const goal = goalLine?.[1]?.trim() ?? output.slice(0, 80);
-			const resultMatch = output.match(/(?:completed|failed)[\s\S]*/i);
-			const result = resultMatch?.[0]?.trim() ?? output.slice(-200);
-
-			extracted.push({ ts: new Date().toISOString(), room: roomId, goal, result, roleName });
+		// In-flight protection: refuse if the room is replying or already sleeping.
+		if (room.isBusy()) {
+			const err = "Room is busy (replying, compacting, or sleeping). Wait for the current turn to finish.";
+			this.sendCommandResult(ws, "sleep_room", id, false, err);
+			room.broadcastMessage({ type: "sleep_done", roomId, success: false, memories: [], error: err });
+			return;
+		}
+		if (!room.beginSleep()) {
+			const err = "Another sleep is already in progress for this room.";
+			this.sendCommandResult(ws, "sleep_room", id, false, err);
+			room.broadcastMessage({ type: "sleep_done", roomId, success: false, memories: [], error: err });
+			return;
 		}
 
-		// Phase 2: storing
-		room.broadcastMessage({ type: "sleep_progress", roomId, phase: "storing" });
+		try {
+			const messages = room.session.messages;
 
-		// Group by role and deduplicate by goal, then store
-		const byRole = new Map<string, typeof extracted>();
-		for (const e of extracted) {
-			if (!byRole.has(e.roleName)) byRole.set(e.roleName, []);
-			byRole.get(e.roleName)!.push(e);
+			// Phase 1: extracting (real async tick so clients see the phase change).
+			room.broadcastMessage({ type: "sleep_progress", roomId, phase: "extracting" });
+			await new Promise((r) => setImmediate(r));
+
+			const extracted: Array<{ ts: string; room: string; goal: string; result: string; roleName: string }> = [];
+			for (const msg of messages) {
+				if (msg.role !== "custom") continue;
+				const cm = msg as { customType?: string; content?: string; details?: Record<string, unknown> };
+				if (cm.customType !== "hub_role_output" || !cm.details?.role) continue;
+				const roleName = cm.details.role as string;
+				const output = (cm.content as string) ?? "";
+				if (!output.trim()) continue;
+
+				// Prefer structured fields populated by role-orchestrator; fall back to
+				// content-based heuristics only when older messages lack details.
+				const structuredTask = typeof cm.details.task === "string" ? (cm.details.task as string).trim() : "";
+				const exitCodeRaw = cm.details.exitCode;
+				const exitCode = typeof exitCodeRaw === "number" ? exitCodeRaw : Number.NaN;
+
+				let goal = structuredTask;
+				if (!goal) {
+					const goalLine = output.match(/Task:\s*(.+?)(?:\n|$)/);
+					goal = goalLine?.[1]?.trim() ?? output.slice(0, 80);
+				}
+
+				// Strip the leading `[role] (status)` and `Task: ...` lines so result
+				// holds the actual assistant output rather than the framing.
+				const body = output
+					.replace(/^\[[^\]]+\]\s*\((?:completed|failed)\)\s*\n?/i, "")
+					.replace(/^Task:\s*.+?\n+/i, "")
+					.trim();
+				const statusLabel = Number.isFinite(exitCode) ? (exitCode === 0 ? "completed" : "failed") : "completed";
+				const summary = body.length > 600 ? `${body.slice(0, 600)}…` : body;
+				const result = `(${statusLabel}) ${summary}`.trim();
+
+				extracted.push({ ts: new Date().toISOString(), room: roomId, goal, result, roleName });
+			}
+
+			// Phase 2: storing
+			room.broadcastMessage({ type: "sleep_progress", roomId, phase: "storing" });
+			await new Promise((r) => setImmediate(r));
+
+			const byRole = new Map<string, typeof extracted>();
+			for (const e of extracted) {
+				if (!byRole.has(e.roleName)) byRole.set(e.roleName, []);
+				byRole.get(e.roleName)!.push(e);
+			}
+
+			const allStored: Array<{
+				seq: number;
+				ts: string;
+				room: string;
+				goal: string;
+				result: string;
+				roleName: string;
+			}> = [];
+			const seenPerRole = new Map<string, Set<string>>();
+
+			for (const [roleName, items] of byRole) {
+				if (!seenPerRole.has(roleName)) seenPerRole.set(roleName, new Set());
+				const seen = seenPerRole.get(roleName)!;
+				const unique = items.filter((m) => {
+					if (seen.has(m.goal)) return false;
+					seen.add(m.goal);
+					return true;
+				});
+				if (unique.length === 0) continue;
+				appendRoleMemory(this.options.cwd, roleName, unique);
+				const fresh = loadRoleMemory(this.options.cwd, roleName);
+				allStored.push(...fresh.slice(-unique.length));
+			}
+
+			// Phase 3: clearing
+			room.broadcastMessage({ type: "sleep_progress", roomId, phase: "clearing" });
+			await new Promise((r) => setImmediate(r));
+
+			room.session.agent.reset();
+			room.session.sessionManager.newSession();
+			room.sendClientUpdate();
+			room.broadcastMessage({ type: "room_session_cleared", roomId, reason: "sleep" });
+
+			this.sendCommandResult(ws, "sleep_room", id, true, undefined, { roomId, memories: allStored });
+			room.broadcastMessage({ type: "sleep_done", roomId, success: true, memories: allStored });
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			this.sendCommandResult(ws, "sleep_room", id, false, message);
+			room.broadcastMessage({ type: "sleep_done", roomId, success: false, memories: [], error: message });
+		} finally {
+			room.endSleep();
 		}
-
-		const allStored: Array<{
-			seq: number;
-			ts: string;
-			room: string;
-			goal: string;
-			result: string;
-			roleName: string;
-		}> = [];
-		const seenPerRole = new Map<string, Set<string>>();
-
-		for (const [roleName, items] of byRole) {
-			if (!seenPerRole.has(roleName)) seenPerRole.set(roleName, new Set());
-			const seen = seenPerRole.get(roleName)!;
-			const unique = items.filter((m) => {
-				if (seen.has(m.goal)) return false;
-				seen.add(m.goal);
-				return true;
-			});
-			appendRoleMemory(this.options.cwd, roleName, unique);
-			const fresh = loadRoleMemory(this.options.cwd, roleName);
-			allStored.push(...fresh.slice(-unique.length));
-		}
-
-		// Phase 3: clearing
-		room.broadcastMessage({ type: "sleep_progress", roomId, phase: "clearing" });
-		room.session.agent.reset();
-		room.session.sessionManager.newSession();
-		room.sendClientUpdate();
-
-		// Done
-		this.sendCommandResult(ws, "sleep_room", id, true, undefined, { roomId, memories: allStored });
-		room.broadcastMessage({ type: "sleep_done", roomId, memories: allStored });
 	}
 
 	private handleGetRoleMemory(ws: WebSocket, roleName: string, id?: string): void {

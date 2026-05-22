@@ -355,6 +355,7 @@ export class RoleOrchestrator {
 				await this.recordRoleMessage("hub_role_output", `[${role.name}] (${statusLabel})\n\n${runResult.output}`, {
 					role: role.name,
 					taskId,
+					task: userMessage,
 					exitCode: runResult.exitCode,
 				});
 

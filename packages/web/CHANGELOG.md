@@ -14,6 +14,7 @@
 ### Changed
 
 - Tool-call and pure-thinking assistant turns no longer render a `(No response from model)` bubble or flash a red error banner. `formatAssistantDisplay` now classifies an assistant message by `stopReason` and `content` (text / toolCall / thinking) and returns `suppressBubble: true` for intermediate steps; `message_update` / `message_end` honor it. Session summaries and `phase = "failed"` are no longer polluted by intermediate turns, and `agent_end` picks the last assistant message with non-empty visible text. The `(No response from model)` fallback is now reserved for genuinely empty stop turns.
+- `Sleep` (`生命` menu) now requires an explicit confirm dialog before clearing the conversation, matches the behavior of `Rebirth`. The success / no-op result is shown in a green info banner; only real failures use the red error banner. The handler also reacts to the new `room_session_cleared` broadcast and purges local reply / turn indices on every client (not only the initiator).
 
 - Web UI workspace layout: sign-in only on the login page; after login, room list and chat share one screen (switch rooms without leaving chat).
 - Web UI restyled with light white-green palette, pill controls, subtle gradients, and motion.

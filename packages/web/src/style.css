@@ -2475,6 +2475,17 @@ select {
   animation: slide-down var(--duration-fast) var(--ease-out) both;
 }
 
+.info-banner {
+  background: var(--success-bg);
+  border: 1px solid rgba(31, 138, 76, 0.22);
+  border-radius: var(--radius-md);
+  color: var(--success);
+  padding: 0.6rem 0.85rem;
+  font-size: 0.8125rem;
+  letter-spacing: -0.01em;
+  animation: slide-down var(--duration-fast) var(--ease-out) both;
+}
+
 .hidden {
   display: none !important;
 }

@@ -6,6 +6,17 @@
 
 - Prompt queue failures are broadcast to connected clients as `error` events instead of failing silently in the server log only.
 - Image attachments with empty or invalid MIME types are normalized from base64 bytes before calling the model (JPEG/PNG/GIF/WebP only).
+- `appendRoleMemory` now allocates `seq` as `max(existing seq) + 1` instead of `existing.length`, so deleting a memory no longer makes the next append collide with another row's seq.
+- `handleSleepRoom` / `handleClearRoomSession` refuse with a clear error when the room is busy (replying / compacting / already sleeping) instead of silently dropping in-flight work.
+- `sleep_progress` phases now `await setImmediate` between broadcasts so clients actually see `extracting -> storing -> clearing` instead of three queued frames at once.
+- Sleep memory extraction prefers structured `details.task` and `details.exitCode` populated by the role orchestrator, and strips the `[role] (status)` / `Task:` framing from `result`. The previous regex-on-content path is kept only as a fallback for older messages.
+
+### Added
+
+- Persisted role memories are now read back into the role's run context: `runRoleSubprocess` injects up to N most-recent memories (default 10) into `contextPrefix`, so sleeping a room actually makes future role runs aware of past goals/results. New helper `loadRecentRoleMemory(cwd, name, limit)`.
+- New protocol message `room_session_cleared` broadcast after rebirth and sleep so every client (not just the initiator) drops local reply / turn indices for the cleared session.
+- `sleep_done` now carries `success: boolean` and an optional `error` string, replacing the prior "empty memories looks like a no-op" ambiguity.
+- Room sleep mutex: while a sleep is in progress the room broadcasts activity phase `sleeping`, the server-side `beginSleep()` mutex blocks concurrent sleeps from multiple clients, and `endSleep()` is called in a `finally` so a thrown extractor cannot leave the room locked.
 
 ### Changed
 

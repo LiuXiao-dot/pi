@@ -28,8 +28,10 @@ export function loadRoleMemory(cwd: string, roleName: string): HubRoleMemory[] {
 }
 
 export function appendRoleMemory(cwd: string, roleName: string, memories: Omit<HubRoleMemory, "seq">[]): void {
+	if (memories.length === 0) return;
 	const existing = loadRoleMemory(cwd, roleName);
-	let seq = existing.length > 0 ? existing.length : 0;
+	// Use max(seq) + 1 instead of length so deletes never cause a collision.
+	let seq = existing.reduce((acc, e) => (e.seq > acc ? e.seq : acc), 0);
 	const dir = getMemoryDir(cwd);
 	mkdirSync(dir, { recursive: true });
 
@@ -45,6 +47,17 @@ export function appendRoleMemory(cwd: string, roleName: string, memories: Omit<H
 		`${[...existing.map((e) => JSON.stringify(e)), ...lines].join("\n")}\n`,
 		"utf-8",
 	);
+}
+
+/**
+ * Load the most recent `limit` memories for a role, oldest first.
+ * Returns an empty array if the role has no memories.
+ */
+export function loadRecentRoleMemory(cwd: string, roleName: string, limit = 10): HubRoleMemory[] {
+	if (limit <= 0) return [];
+	const all = loadRoleMemory(cwd, roleName);
+	if (all.length <= limit) return all;
+	return all.slice(-limit);
 }
 
 export function deleteRoleMemory(cwd: string, roleName: string, seq: number): void {

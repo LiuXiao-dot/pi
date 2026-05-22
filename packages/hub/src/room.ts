@@ -66,6 +66,8 @@ export class Room {
 	private activityPhase: HubActivityPhase = "idle";
 	private activityDetail: string | undefined;
 	private activityHostDisplayName: string | null = null;
+	/** Server-side mutex: true while a sleep operation is in progress. */
+	private sleeping = false;
 
 	constructor(options: RoomOptions) {
 		this.roomId = options.roomId;
@@ -684,6 +686,42 @@ export class Room {
 				messages: [],
 			});
 		}
+	}
+
+	/**
+	 * True when the room cannot accept rebirth / sleep right now: there is an
+	 * in-flight session turn, compaction is running, or a sleep is already
+	 * underway.
+	 */
+	isBusy(): boolean {
+		return (
+			this.sleeping ||
+			this.session.isStreaming ||
+			this.session.isCompacting ||
+			this.queue.getTurnOriginDisplayName() !== null
+		);
+	}
+
+	/** Acquire the server-side sleep mutex. Returns false if another sleep is already in progress. */
+	beginSleep(): boolean {
+		if (this.sleeping) return false;
+		this.sleeping = true;
+		this.setActivity("sleeping");
+		return true;
+	}
+
+	/** Release the sleep mutex and restore activity to idle. */
+	endSleep(): void {
+		this.sleeping = false;
+		this.setActivity(this.session.isStreaming ? "replying" : "idle");
+	}
+
+	/**
+	 * Abort any in-flight queue turn. Used by rebirth/sleep when the caller has
+	 * already confirmed they want to discard the running work.
+	 */
+	abortInflight(): void {
+		this.queueAbortController?.abort();
 	}
 
 	/** Broadcast a hub server message to all clients in the room. */
