@@ -27,6 +27,8 @@
 - Hub restart no longer leaves a stale `joined` state on a closed WebSocket; room config and re-join work after reconnect.
 - Auto-login and refresh wait for WebSocket `open` before listing rooms.
 - Hub web client now renders user and assistant messages live from `agent_event` updates instead of only after a page refresh.
+- Cold-join history reconstruction: `ingestJoinHistory` used to discard everything except `role: "user"` messages, so after a hub restart the room appeared completely empty even though the server transmitted the full conversation. It now groups the history into synthetic reply rows (one per user turn, one per role task, one per compaction summary) prefixed with `session:<roomId>:hist-` / `role:hist-` so live `agent_event` flow can still append on top without colliding.
+- `renderReplyDetail` now renders `toolResult` messages as collapsible cards (matching the live tool-call UI), `compactionSummary` messages as a dashed banner with token-count + summary text, and walks the assistant message `content` array to render embedded `toolCall` items inline. Previously these were silently dropped, so the detail view after cold join only showed the user question and final assistant text with all tool I/O missing.
 
 ### Added
 

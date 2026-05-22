@@ -741,6 +741,32 @@ export class Room {
 		this.queueAbortController?.abort();
 	}
 
+	/**
+	 * Reset the agent and rotate to a fresh session file in the same room
+	 * directory, then propagate the new path back to the registry so a
+	 * subsequent hub restart resumes from this new session instead of the
+	 * pre-rebirth/sleep file.
+	 *
+	 * Also broadcasts an empty `joined` (via `sendClientUpdate`) and a
+	 * `room_session_cleared` event so every connected client purges its local
+	 * reply / turn cache.
+	 */
+	clearAndRotateSession(reason: "rebirth" | "sleep"): void {
+		this.session.agent.reset();
+		this.session.sessionManager.newSession();
+		const newFile = this.session.sessionManager.getSessionFile();
+		if (newFile) {
+			try {
+				this.registry.updateSessionFile(this.roomId, newFile);
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				console.error(`[pi-hub] failed to update sessionFile for room ${this.roomId}: ${message}`);
+			}
+		}
+		this.sendClientUpdate();
+		this.broadcast({ type: "room_session_cleared", roomId: this.roomId, reason });
+	}
+
 	/** Broadcast a hub server message to all clients in the room. */
 	broadcastMessage(message: HubServerMessage): void {
 		this.broadcast(message);

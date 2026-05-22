@@ -278,13 +278,7 @@ export class HubAdmin {
 			);
 			return;
 		}
-		// Clear messages and reset session state
-		room.session.agent.reset();
-		room.session.sessionManager.newSession();
-		// Notify all clients in the room with empty messages, then broadcast a
-		// session-cleared event so every client purges its local reply / turn cache.
-		room.sendClientUpdate();
-		room.broadcastMessage({ type: "room_session_cleared", roomId, reason: "rebirth" });
+		room.clearAndRotateSession("rebirth");
 		this.sendCommandResult(ws, "clear_room_session", id, true);
 	}
 
@@ -387,10 +381,9 @@ export class HubAdmin {
 			room.broadcastMessage({ type: "sleep_progress", roomId, phase: "clearing" });
 			await new Promise((r) => setImmediate(r));
 
-			room.session.agent.reset();
-			room.session.sessionManager.newSession();
-			room.sendClientUpdate();
-			room.broadcastMessage({ type: "room_session_cleared", roomId, reason: "sleep" });
+			// Single source of truth: reset agent, rotate session file, sync
+			// registry, sendClientUpdate, broadcast room_session_cleared.
+			room.clearAndRotateSession("sleep");
 
 			this.sendCommandResult(ws, "sleep_room", id, true, undefined, { roomId, memories: allStored });
 			room.broadcastMessage({ type: "sleep_done", roomId, success: true, memories: allStored });

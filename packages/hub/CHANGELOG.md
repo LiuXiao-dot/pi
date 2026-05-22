@@ -14,6 +14,8 @@
 - `handleSleepRoom` / `handleClearRoomSession` refuse with a clear error when the room is busy (replying / compacting / already sleeping) instead of silently dropping in-flight work.
 - `sleep_progress` phases now `await setImmediate` between broadcasts so clients actually see `extracting -> storing -> clearing` instead of three queued frames at once.
 - Sleep memory extraction prefers structured `details.task` and `details.exitCode` populated by the role orchestrator, and strips the `[role] (status)` / `Task:` framing from `result`. The previous regex-on-content path is kept only as a fallback for older messages.
+- Rebirth (`clear_room_session`) and sleep (`sleep_room`) used to call `sessionManager.newSession()` which silently rotated the session file path on disk *without* updating the room registry. After a hub restart, the registry kept pointing at the pre-rebirth file and any new conversations written after the rebirth (in the orphan jsonl) were unreachable. Both code paths now go through the new `Room.clearAndRotateSession(reason)` which reset, rotates, *and* propagates the new path back to `RoomRegistry.updateSessionFile`.
+- `RoomManager.createSessionForRoom` now self-heals when the registry's `sessionFile` is missing or empty: it scans the room directory for the most recently-modified valid jsonl via `findMostRecentSession()` and resumes from that file, then updates the registry. This recovers conversation history that was previously orphaned by the bug above.
 
 ### Added
 

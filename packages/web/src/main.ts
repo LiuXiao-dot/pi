@@ -1873,13 +1873,85 @@ function renderWorkspace(
 		messages.appendChild(backBar);
 
 		for (const msg of reply.messages) {
-			const m = msg as { role?: string; customType?: string };
-			if (m.role === "user") {
+			const m = msg as {
+				role?: string;
+				customType?: string;
+				content?: unknown;
+				summary?: string;
+				tokensBefore?: number;
+				toolName?: string;
+				isError?: boolean;
+			};
+			if (m.role === "compactionSummary") {
+				const banner = el("div", "msg compaction-banner");
+				const meta = el("div", "meta");
+				const tokens = typeof m.tokensBefore === "number" ? ` · ${m.tokensBefore} tokens before` : "";
+				meta.textContent = `上下文已压缩${tokens}`;
+				banner.appendChild(meta);
+				if (m.summary) {
+					const body = el("div", "msg-body");
+					body.textContent = m.summary;
+					banner.appendChild(body);
+				}
+				messages.appendChild(banner);
+			} else if (m.role === "user") {
 				appendMessage("user", getMessageText(msg), undefined, false);
 			} else if (m.role === "assistant") {
 				const assistant = formatAssistantDisplay(getAssistantMessageMeta(msg));
-				if (assistant.suppressBubble) continue;
-				appendCollapsibleAssistantMsg(assistant.displayText, false, undefined, false, assistant.isFailed);
+				if (!assistant.suppressBubble) {
+					appendCollapsibleAssistantMsg(assistant.displayText, false, undefined, false, assistant.isFailed);
+				}
+				// Render embedded toolCall items so historical tool invocations are
+				// visible inline (live flow uses tool_execution_start events; on
+				// cold join those events do not replay, so we walk the assistant
+				// message content array instead).
+				if (Array.isArray(m.content)) {
+					for (const part of m.content as Array<{ type?: string; name?: string; arguments?: unknown }>) {
+						if (part.type !== "toolCall") continue;
+						const toolDiv = el("div", "msg tool tool-collapsible");
+						const headerLine = el("div", "tool-header");
+						const indicator = el("span", "tool-toggle");
+						indicator.textContent = "▶";
+						const nameSpan = el("span", "tool-name");
+						nameSpan.textContent = part.name ?? "tool";
+						headerLine.append(indicator, nameSpan);
+						toolDiv.appendChild(headerLine);
+						const detailWrap = el("div", "tool-detail hidden");
+						const argsPre = el("pre", "tool-code");
+						argsPre.textContent =
+							part.arguments !== undefined ? JSON.stringify(part.arguments, null, 2) : "(no arguments)";
+						detailWrap.appendChild(argsPre);
+						toolDiv.appendChild(detailWrap);
+						let expanded = false;
+						toolDiv.addEventListener("click", () => {
+							expanded = !expanded;
+							detailWrap.classList.toggle("hidden", !expanded);
+							indicator.textContent = expanded ? "▼" : "▶";
+						});
+						messages.appendChild(toolDiv);
+					}
+				}
+			} else if (m.role === "toolResult") {
+				const toolDiv = el("div", `msg tool tool-collapsible${m.isError ? " tool-error" : ""}`);
+				const headerLine = el("div", "tool-header");
+				const indicator = el("span", "tool-toggle");
+				indicator.textContent = "▶";
+				const nameSpan = el("span", "tool-name");
+				nameSpan.textContent = `${m.toolName ?? "tool"} → ${m.isError ? "error" : "result"}`;
+				headerLine.append(indicator, nameSpan);
+				toolDiv.appendChild(headerLine);
+				const detailWrap = el("div", "tool-detail hidden");
+				const pre = el("pre", "tool-code");
+				pre.textContent = getMessageText(msg) || "(empty result)";
+				detailWrap.appendChild(pre);
+				toolDiv.appendChild(detailWrap);
+				let expanded = false;
+				toolDiv.addEventListener("click", () => {
+					expanded = !expanded;
+					detailWrap.classList.toggle("hidden", !expanded);
+					indicator.textContent = expanded ? "▼" : "▶";
+				});
+				messages.appendChild(toolDiv);
 			} else if (m.role === "custom") {
 				const div = el("div", `msg ${messageRoleClass(m)}`);
 				const meta = el("div", "meta");
@@ -2992,13 +3064,172 @@ function renderWorkspace(
 
 	function ingestJoinHistory(roomId: string, msgs: unknown[]): void {
 		const users: Array<{ text: string; meta: string }> = [];
-		for (const msg of msgs) {
-			const m = msg as { role?: string };
-			if (m.role === "user") {
-				users.push({ text: getMessageText(msg), meta: session.displayName });
+
+		// Drop any reply entries we previously synthesized from history; live
+		// (event-driven) entries keep their ids and are preserved.
+		const HIST_PREFIX_SESSION = `session:${roomId}:hist-`;
+		const HIST_PREFIX_ROLE = "role:hist-";
+		const existingIds = roomReplies.get(roomId) ?? [];
+		for (const id of existingIds) {
+			if (id.startsWith(HIST_PREFIX_SESSION) || id.startsWith(HIST_PREFIX_ROLE)) {
+				replyStore.delete(id);
 			}
 		}
+		const preserved = existingIds.filter(
+			(id) => !id.startsWith(HIST_PREFIX_SESSION) && !id.startsWith(HIST_PREFIX_ROLE),
+		);
+
+		// Group history into reply rows so the user can see prior turns after a
+		// cold join (restart + rejoin). We bucket messages chronologically:
+		//   - compactionSummary       -> standalone "Context compacted" row
+		//   - custom hub_role_*       -> one role row per (roleName, taskId)
+		//   - user                    -> opens a new session row
+		//   - assistant / toolResult  -> appended to the open session row
+		// (assistant/toolResult arriving with no preceding user open a synthetic
+		//  session row, which is what happens for post-compaction tails.)
+		type HistGroup =
+			| { kind: "session"; messages: unknown[]; userText: string; ts: number }
+			| { kind: "role"; roleName: string; taskId: string; messages: unknown[]; ts: number }
+			| { kind: "compaction"; messages: unknown[]; ts: number };
+
+		const groups: HistGroup[] = [];
+		let openSession: (HistGroup & { kind: "session" }) | null = null;
+		const roleGroupByKey = new Map<string, HistGroup & { kind: "role" }>();
+
+		const tsOf = (msg: unknown): number => {
+			const t = (msg as { timestamp?: unknown }).timestamp;
+			if (typeof t === "number") return t;
+			if (typeof t === "string") {
+				const n = Date.parse(t);
+				return Number.isFinite(n) ? n : 0;
+			}
+			return 0;
+		};
+
+		for (const msg of msgs) {
+			const m = msg as {
+				role?: string;
+				customType?: string;
+				details?: Record<string, unknown>;
+			};
+			const ts = tsOf(msg);
+
+			if (m.role === "compactionSummary") {
+				groups.push({ kind: "compaction", messages: [msg], ts });
+				openSession = null;
+				continue;
+			}
+
+			if (m.role === "custom" && typeof m.customType === "string" && m.customType.startsWith("hub_role_")) {
+				const roleName = (m.details?.role as string | undefined) ?? "role";
+				const taskId = (m.details?.taskId as string | undefined) ?? "";
+				const key = `${roleName}::${taskId || `solo-${groups.length}`}`;
+				let g = roleGroupByKey.get(key);
+				if (!g) {
+					g = { kind: "role", roleName, taskId, messages: [], ts };
+					groups.push(g);
+					roleGroupByKey.set(key, g);
+				}
+				g.messages.push(msg);
+				continue;
+			}
+
+			if (m.role === "user") {
+				users.push({ text: getMessageText(msg), meta: session.displayName });
+				openSession = { kind: "session", messages: [msg], userText: getMessageText(msg), ts };
+				groups.push(openSession);
+				continue;
+			}
+
+			if (m.role === "assistant" || m.role === "toolResult") {
+				if (!openSession) {
+					openSession = { kind: "session", messages: [], userText: "", ts };
+					groups.push(openSession);
+				}
+				openSession.messages.push(msg);
+			}
+			// Unknown roles are silently dropped from reply rows; they are still
+			// present in the underlying session on the server.
+		}
+
 		roomUserMessages.set(roomId, users);
+
+		// Synthesize ReplyEntry objects for each group.
+		const histIds: string[] = [];
+		let sessionIdx = 0;
+		let roleIdx = 0;
+		let compactionIdx = 0;
+		for (const g of groups) {
+			if (g.kind === "session") {
+				const rid = `${HIST_PREFIX_SESSION}${sessionIdx++}`;
+				const label = g.userText ? truncateSummary(g.userText, 40) : "对话";
+				const lastAssistantText = (() => {
+					for (let i = g.messages.length - 1; i >= 0; i--) {
+						const mm = g.messages[i] as { role?: string };
+						if (mm.role === "assistant") {
+							const t = getMessageText(mm).trim();
+							if (t) return t;
+						}
+					}
+					return "";
+				})();
+				replyStore.set(rid, {
+					id: rid,
+					roomId,
+					kind: "session",
+					label,
+					phase: "done",
+					summary: lastAssistantText ? truncateSummary(lastAssistantText) : "",
+					messages: g.messages,
+					events: [],
+					startedAt: g.ts,
+					endedAt: g.ts,
+				});
+				histIds.push(rid);
+			} else if (g.kind === "role") {
+				const rid = `${HIST_PREFIX_ROLE}${roleIdx++}`;
+				const lastOutput = (() => {
+					for (let i = g.messages.length - 1; i >= 0; i--) {
+						const mm = g.messages[i] as { customType?: string };
+						if (mm.customType === "hub_role_output") return getMessageText(mm).trim();
+					}
+					return getMessageText(g.messages[g.messages.length - 1] ?? {}).trim();
+				})();
+				replyStore.set(rid, {
+					id: rid,
+					roomId,
+					kind: "role",
+					label: g.roleName,
+					roleName: g.roleName,
+					phase: "done",
+					summary: lastOutput ? truncateSummary(lastOutput) : "",
+					messages: g.messages,
+					events: [],
+					startedAt: g.ts,
+					endedAt: g.ts,
+				});
+				histIds.push(rid);
+			} else {
+				const rid = `${HIST_PREFIX_SESSION}compaction-${compactionIdx++}`;
+				const sm = g.messages[0] as { summary?: string; tokensBefore?: number };
+				const summary = sm?.summary ?? "";
+				replyStore.set(rid, {
+					id: rid,
+					roomId,
+					kind: "session",
+					label: "上下文已压缩",
+					phase: "done",
+					summary: summary ? truncateSummary(summary) : "",
+					messages: g.messages,
+					events: [],
+					startedAt: g.ts,
+					endedAt: g.ts,
+				});
+				histIds.push(rid);
+			}
+		}
+
+		roomReplies.set(roomId, [...histIds, ...preserved]);
 	}
 
 	async function selectRoom(roomId: string): Promise<void> {

@@ -196,6 +196,7 @@ export {
 	type CustomEntry,
 	type CustomMessageEntry,
 	type FileEntry,
+	findMostRecentSession,
 	getLatestCompactionEntry,
 	type ModelChangeEntry,
 	migrateSessionEntries,

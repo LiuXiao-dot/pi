@@ -4,6 +4,7 @@ import {
 	AuthStorage,
 	type CreateAgentSessionResult,
 	createAgentSession,
+	findMostRecentSession,
 	getAgentDir,
 	ModelRegistry,
 	SessionManager,
@@ -148,10 +149,24 @@ export class RoomManager {
 		if (hasSessionContent(sessionFile)) {
 			sessionManager = SessionManager.open(sessionFile, undefined, cwd);
 		} else {
-			sessionManager = SessionManager.create(cwd, sessionDir);
-			const actualFile = sessionManager.getSessionFile();
-			if (actualFile && actualFile !== sessionFile) {
-				this.registry.updateSessionFile(roomId, actualFile);
+			// Self-heal: the registry's sessionFile is missing or empty (e.g. a
+			// rebirth/sleep rotated the session but never wrote the new path back
+			// to the registry, leaving an orphan jsonl in the same directory).
+			// Prefer the most recently modified valid session file in the room
+			// directory before giving up and creating a brand-new empty session.
+			const recovered = existsSync(sessionDir) ? findMostRecentSession(sessionDir) : null;
+			if (recovered) {
+				console.warn(
+					`[pi-hub] room ${roomId}: registry sessionFile missing (${sessionFile}); recovering most recent session ${recovered}`,
+				);
+				sessionManager = SessionManager.open(recovered, undefined, cwd);
+				this.registry.updateSessionFile(roomId, recovered);
+			} else {
+				sessionManager = SessionManager.create(cwd, sessionDir);
+				const actualFile = sessionManager.getSessionFile();
+				if (actualFile && actualFile !== sessionFile) {
+					this.registry.updateSessionFile(roomId, actualFile);
+				}
 			}
 		}
 
