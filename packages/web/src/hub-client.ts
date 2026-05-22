@@ -423,6 +423,16 @@ export class HubClient {
 		});
 	}
 
+	async listDirectory(
+		dirPath?: string,
+	): Promise<{ path: string; entries: Array<{ name: string; isDirectory: boolean }> }> {
+		return this.sendCommand({
+			type: "list_directory",
+			token: this.token,
+			path: dirPath,
+		});
+	}
+
 	async listRoles(): Promise<HubRoleSummaryPayload[]> {
 		const data = await this.sendCommand<{ roles: HubRoleSummaryPayload[] }>({
 			type: "list_roles",

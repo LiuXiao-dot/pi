@@ -1,3 +1,5 @@
+import { readdir } from "node:fs/promises";
+import { resolve as resolvePath, sep } from "node:path";
 import type { WebSocket } from "ws";
 import type { ResolvedHubRolesConfig } from "./config.ts";
 import type { HubCommandResult, HubRoomConfigPayload, HubScopedClientMessage } from "./protocol.ts";
@@ -114,6 +116,9 @@ export class HubAdmin {
 					return;
 				case "clear_role_memory":
 					await this.handleClearRoleMemory(ws, message.roleName, message.id);
+					return;
+				case "list_directory":
+					await this.handleListDirectory(ws, message.path, message.id);
 					return;
 			}
 		} catch (err) {
@@ -408,6 +413,30 @@ export class HubAdmin {
 	private handleDeleteRoleMemory(ws: WebSocket, roleName: string, seq: number, id?: string): void {
 		deleteRoleMemory(this.options.cwd, roleName, seq);
 		this.sendCommandResult(ws, "delete_role_memory", id, true);
+	}
+
+	private async handleListDirectory(ws: WebSocket, dirPath: string | undefined, id?: string): Promise<void> {
+		const hubRoot = resolvePath(this.options.cwd);
+		const base = resolvePath(hubRoot, dirPath ?? ".");
+		// Prevent directory traversal above the hub workspace root.
+		if (!base.startsWith(hubRoot + sep) && base !== hubRoot) {
+			this.sendCommandResult(ws, "list_directory", id, false, `Access denied: path is outside the hub workspace`);
+			return;
+		}
+		const entries: Array<{ name: string; isDirectory: boolean }> = [];
+		try {
+			const dirents = await readdir(base, { withFileTypes: true });
+			for (const d of dirents) {
+				if (d.isDirectory() || d.isSymbolicLink()) {
+					entries.push({ name: d.name, isDirectory: true });
+				}
+			}
+			entries.sort((a, b) => a.name.localeCompare(b.name));
+		} catch {
+			this.sendCommandResult(ws, "list_directory", id, false, `Cannot read directory: ${base}`);
+			return;
+		}
+		this.sendCommandResult(ws, "list_directory", id, true, undefined, { path: base, entries });
 	}
 
 	private handleClearRoleMemory(ws: WebSocket, roleName: string, id?: string): void {

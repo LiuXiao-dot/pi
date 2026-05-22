@@ -1,5 +1,19 @@
 /** Client-side mirror of hub protocol (subset). */
 
+export interface HubRoleSummaryEntry {
+	name: string;
+	description: string;
+	who?: string;
+	can?: string;
+	when?: string;
+}
+
+export interface HubSkillSummaryEntry {
+	name: string;
+	source: "user" | "project";
+	description?: string;
+}
+
 export interface HubModelInfo {
 	provider: string;
 	id: string;
@@ -26,6 +40,11 @@ export interface HubActivityUpdateMessage extends HubServerMessage {
 }
 
 export type HubServerMessage = { type: string; [key: string]: unknown };
+export interface HubDirectoryEntry {
+	name: string;
+	isDirectory: boolean;
+}
+
 export type HubClientMessage = { type: string; [key: string]: unknown };
 
 export interface HubCommandResultMessage extends HubServerMessage {
@@ -166,6 +185,16 @@ export interface HubRoomSessionCleared extends HubServerMessage {
 	type: "room_session_cleared";
 	roomId: string;
 	reason: "rebirth" | "sleep";
+}
+
+export interface HubRoomInfo extends HubServerMessage {
+	type: "room_info";
+	roomId: string;
+	roomTitle?: string;
+	roomRoles?: HubRoleSummaryEntry[];
+	roomSkills?: HubSkillSummaryEntry[];
+	roomRules?: string;
+	roomModel?: string;
 }
 
 export interface HubRoleMemory {

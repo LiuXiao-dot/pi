@@ -82,7 +82,8 @@ export type HubScopedClientMessage =
 	| { type: "sleep_room"; token: string; roomId: string; id?: string }
 	| { type: "get_role_memory"; token: string; roleName: string; id?: string }
 	| { type: "delete_role_memory"; token: string; roleName: string; seq: number; id?: string }
-	| { type: "clear_role_memory"; token: string; roleName: string; id?: string };
+	| { type: "clear_role_memory"; token: string; roleName: string; id?: string }
+	| { type: "list_directory"; token: string; path?: string; id?: string };
 
 export function isHubScopedMessage(message: HubClientMessage): message is HubScopedClientMessage {
 	return (
@@ -104,7 +105,8 @@ export function isHubScopedMessage(message: HubClientMessage): message is HubSco
 		message.type === "sleep_room" ||
 		message.type === "get_role_memory" ||
 		message.type === "delete_role_memory" ||
-		message.type === "clear_role_memory"
+		message.type === "clear_role_memory" ||
+		message.type === "list_directory"
 	);
 }
 
@@ -159,6 +161,20 @@ export interface HubPresenceUpdate {
 	members: HubPresenceMember[];
 }
 
+export interface HubRoleSummaryEntry {
+	name: string;
+	description: string;
+	who?: string;
+	can?: string;
+	when?: string;
+}
+
+export interface HubSkillSummaryEntry {
+	name: string;
+	source: "user" | "project";
+	description?: string;
+}
+
 export interface HubJoined {
 	type: "joined";
 	clientId: string;
@@ -167,6 +183,16 @@ export interface HubJoined {
 	messages: unknown[];
 	/** Resolved absolute workspace path for this room. */
 	workspace?: string;
+	/** Room display title. */
+	roomTitle?: string;
+	/** Roles assigned to this room. */
+	roomRoles?: HubRoleSummaryEntry[];
+	/** Skills available in this room's workspace. */
+	roomSkills?: HubSkillSummaryEntry[];
+	/** Room-level rules. */
+	roomRules?: string;
+	/** Current session model (provider/id). */
+	roomModel?: string;
 }
 
 export interface HubLeft {
@@ -411,6 +437,17 @@ export type HubExtensionUIOutbound = HubExtensionUIRequest & {
 	waitingForDisplayName?: string;
 };
 
+/** Broadcast when room config changes so clients can update the room info bar. */
+export interface HubRoomInfo {
+	type: "room_info";
+	roomId: string;
+	roomTitle?: string;
+	roomRoles?: HubRoleSummaryEntry[];
+	roomSkills?: HubSkillSummaryEntry[];
+	roomRules?: string;
+	roomModel?: string;
+}
+
 export type HubServerMessage =
 	| HubJoined
 	| HubLeft
@@ -430,4 +467,5 @@ export type HubServerMessage =
 	| HubSleepDoneMessage
 	| HubRoomSessionCleared
 	| HubMentionWarning
+	| HubRoomInfo
 	| HubError;

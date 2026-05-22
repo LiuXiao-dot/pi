@@ -26,10 +26,14 @@ import type {
 	HubRoleGap,
 	HubRolePlan,
 	HubRoleProgress,
+	HubRoleSummaryEntry,
+	HubRoomInfo,
 	HubServerMessage,
+	HubSkillSummaryEntry,
 } from "./protocol.ts";
 import { RoleOrchestrator } from "./role-orchestrator.ts";
 import { discoverRoles } from "./roles/discovery.ts";
+import { buildRoomContext, buildRoomContextSummaries } from "./room-context.ts";
 import type { RoomConfigFile, RoomRegistry } from "./room-registry.ts";
 import { safeStringify } from "./safe-json.ts";
 import { buildSessionState } from "./state-snapshot.ts";
@@ -48,6 +52,8 @@ export interface RoomOptions {
 	modelsConfig: ResolvedHubModelsConfig;
 	roomConfig: RoomConfigFile;
 	registry: RoomRegistry;
+	/** Mutable holder for room context text. Used to rebuild system prompt on config change. */
+	roomContextHolder?: { text: string };
 }
 
 export class Room {
@@ -57,6 +63,7 @@ export class Room {
 	readonly modelsConfig: ResolvedHubModelsConfig;
 	private readonly rolesConfig: ResolvedHubRolesConfig;
 	private readonly registry: RoomRegistry;
+	private readonly roomContextHolder: { text: string } | undefined;
 	private roomConfig: RoomConfigFile;
 	private roleModelOverrides: Record<string, string>;
 	private queueAbortController: AbortController | null = null;
@@ -80,6 +87,7 @@ export class Room {
 		this.registry = options.registry;
 		this.roomConfig = options.roomConfig;
 		this.roleModelOverrides = { ...options.modelsConfig.roleModels };
+		this.roomContextHolder = options.roomContextHolder;
 
 		const roleOrchestrator = this.isRolesEnabledForRoom()
 			? new RoleOrchestrator({
@@ -139,6 +147,45 @@ export class Room {
 
 	reloadRoomConfig(config: RoomConfigFile): void {
 		this.roomConfig = config;
+		// Rebuild room context and refresh system prompt so the AI
+		// immediately learns about changed roles, skills, or rules.
+		if (this.roomContextHolder) {
+			const title = this.registry.getRoom(this.roomId)?.title;
+			this.roomContextHolder.text = buildRoomContext({
+				roomId: this.roomId,
+				title,
+				workspace: this.cwd,
+				cwd: this.cwd,
+				rolesConfig: { rolesDir: this.rolesConfig.rolesDir },
+				roomConfig: config,
+			});
+			void this.session.reload();
+		}
+		// Broadcast updated room info so all clients see the new badges.
+		this.broadcastRoomInfo();
+	}
+
+	/** Broadcast room metadata (title, roles, skills, rules, model) to all clients. */
+	broadcastRoomInfo(): void {
+		const title = this.registry.getRoom(this.roomId)?.title;
+		const summaries = buildRoomContextSummaries({
+			roomId: this.roomId,
+			title,
+			workspace: this.cwd,
+			cwd: this.cwd,
+			rolesConfig: { rolesDir: this.rolesConfig.rolesDir },
+			roomConfig: this.roomConfig,
+		});
+		const currentModel = this.session.model;
+		this.broadcast({
+			type: "room_info",
+			roomId: this.roomId,
+			roomTitle: title,
+			roomRoles: summaries.roles,
+			roomSkills: summaries.skills,
+			roomRules: this.roomConfig.rules,
+			roomModel: currentModel ? `${currentModel.provider}/${currentModel.id}` : undefined,
+		});
 	}
 
 	private broadcastRoleEvent(message: HubRolePlan | HubRoleGap | HubRoleProgress): void {
@@ -292,20 +339,49 @@ export class Room {
 	}
 
 	sendJoined(client: RoomClient): void {
-		this.send(client, {
-			type: "joined",
-			clientId: client.id,
-			roomId: this.roomId,
-			state: buildSessionState(this.session),
-			messages: this.session.messages,
-			workspace: this.cwd,
-		});
+		this.send(client, this.buildJoinedMessage(client));
 		this.send(client, {
 			type: "queue_update",
 			pending: [],
 			current: null,
 		});
 		this.broadcastPresence();
+	}
+
+	private buildJoinedMessage(client: RoomClient) {
+		const title = this.registry.getRoom(this.roomId)?.title;
+		const summaries = buildRoomContextSummaries({
+			roomId: this.roomId,
+			title,
+			workspace: this.cwd,
+			cwd: this.cwd,
+			rolesConfig: { rolesDir: this.rolesConfig.rolesDir },
+			roomConfig: this.roomConfig,
+		});
+		const currentModel = this.session.model;
+		return {
+			type: "joined" as const,
+			clientId: client.id,
+			roomId: this.roomId,
+			state: buildSessionState(this.session),
+			messages: this.session.messages,
+			workspace: this.cwd,
+			roomTitle: title,
+			roomRoles: summaries.roles.map((r) => ({
+				name: r.name,
+				description: r.description,
+				who: r.who,
+				can: r.can,
+				when: r.when,
+			})) as HubRoleSummaryEntry[],
+			roomSkills: summaries.skills.map((s) => ({
+				name: s.name,
+				source: s.source,
+				description: s.description,
+			})) as HubSkillSummaryEntry[],
+			roomRules: this.roomConfig.rules,
+			roomModel: currentModel ? `${currentModel.provider}/${currentModel.id}` : undefined,
+		};
 	}
 
 	async handleMessage(client: RoomClient, message: HubClientMessage): Promise<void> {
@@ -440,14 +516,7 @@ export class Room {
 			}
 
 			case "get_state": {
-				this.send(client, {
-					type: "joined",
-					clientId: client.id,
-					roomId: this.roomId,
-					state: buildSessionState(this.session),
-					messages: this.session.messages,
-					workspace: this.cwd,
-				});
+				this.send(client, this.buildJoinedMessage(client));
 				this.sendCommandResult(client, "get_state", message.id, true);
 				return;
 			}
@@ -699,7 +768,9 @@ export class Room {
 		this.broadcast({ type: "room_deleted", roomId: this.roomId });
 	}
 
-	broadcast(message: HubServerMessage | HubQueueUpdate | HubRolePlan | HubRoleGap | HubRoleProgress): void {
+	broadcast(
+		message: HubServerMessage | HubQueueUpdate | HubRolePlan | HubRoleGap | HubRoleProgress | HubRoomInfo,
+	): void {
 		const data = safeStringify(message);
 		if (!data) {
 			return;
@@ -744,14 +815,8 @@ export class Room {
 	/** Send current session state + messages to all clients (used after session clear). */
 	sendClientUpdate(): void {
 		for (const client of this.clients.values()) {
-			this.send(client, {
-				type: "joined",
-				clientId: client.id,
-				roomId: this.roomId,
-				state: buildSessionState(this.session),
-				messages: [],
-				workspace: this.cwd,
-			});
+			const joined = this.buildJoinedMessage(client);
+			this.send(client, { ...joined, messages: [] });
 		}
 	}
 

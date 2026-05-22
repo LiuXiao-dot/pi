@@ -1167,6 +1167,78 @@ select {
   white-space: nowrap;
 }
 
+/* === Room Info Bar === */
+
+.room-info-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  font-size: 0.6875rem;
+}
+
+.room-info-bar.hidden {
+  display: none;
+}
+
+.room-info-title {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 0.75rem;
+}
+
+.room-info-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.room-info-badge {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.04em;
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--radius-pill);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  white-space: nowrap;
+  cursor: default;
+  transition: background var(--duration-fast), border-color var(--duration-fast);
+}
+
+.room-info-badge:hover {
+  background: var(--bg-raised);
+  border-color: var(--border-strong);
+}
+
+.room-info-model {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(0, 98, 255, 0.05);
+}
+
+.room-info-roles {
+  color: #7c3aed;
+  border-color: #c4b5fd;
+  background: rgba(124, 58, 237, 0.05);
+}
+
+.room-info-skills {
+  color: #059669;
+  border-color: #a7f3d0;
+  background: rgba(5, 150, 105, 0.05);
+}
+
+.room-info-rules {
+  color: #d97706;
+  border-color: #fde68a;
+  background: rgba(217, 119, 6, 0.05);
+}
+
 /* === Model Bar === */
 
 .model-bar {
@@ -2317,6 +2389,143 @@ body.theme-dark .modal-backdrop {
 .modal .actions button:last-child:hover {
   color: var(--text);
   border-color: rgba(148, 163, 184, 0.22);
+}
+
+/* === Workspace path display === */
+
+.ws-path-row {
+	display: flex;
+	align-items: center;
+	gap: 0.3rem;
+	padding: 0.25rem 1rem 0.35rem;
+	font-size: 0.7rem;
+	flex-shrink: 0;
+}
+
+.ws-path-row.hidden {
+	display: none;
+}
+
+.ws-path-label {
+	color: var(--text-muted);
+	flex-shrink: 0;
+}
+
+.ws-path-value {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--mono);
+	font-size: 0.65rem;
+	color: var(--accent);
+}
+
+.ws-path-clear {
+	flex-shrink: 0;
+	width: 1.2rem;
+	height: 1.2rem;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	border: none;
+	background: transparent;
+	color: var(--text-muted);
+	cursor: pointer;
+	font-size: 0.85rem;
+	border-radius: 50%;
+	transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+.ws-path-clear:hover {
+	background: var(--bg-subtle);
+	color: var(--error);
+}
+
+/* === Folder Picker Modal === */
+
+.folder-picker-modal {
+	max-width: 480px;
+	width: 100%;
+}
+
+.folder-picker-path {
+	margin-bottom: 0.5rem;
+}
+
+.folder-picker-path input {
+	width: 100%;
+	padding: 0.55rem 0.75rem;
+	font-family: var(--mono);
+	font-size: 0.75rem;
+	background: var(--bg-deep);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	color: var(--text-body);
+}
+
+.folder-picker-path input:focus {
+	outline: none;
+	border-color: var(--accent-ring);
+}
+
+.folder-picker-list {
+	max-height: 280px;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 0.15rem;
+	margin: 0.25rem 0 0.75rem;
+}
+
+.folder-picker-item {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	width: 100%;
+	text-align: left;
+	padding: 0.45rem 0.55rem;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text-body);
+	cursor: pointer;
+	font: inherit;
+	font-size: 0.85rem;
+	transition: background var(--duration-fast);
+}
+
+.folder-picker-item:hover {
+	background: var(--accent-soft);
+}
+
+.folder-picker-parent {
+	color: var(--text-muted);
+}
+
+.folder-picker-parent:hover {
+	color: var(--text);
+}
+
+.folder-picker-item-icon {
+	flex-shrink: 0;
+	font-size: 0.9rem;
+}
+
+.folder-picker-item-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.folder-picker-empty {
+	padding: 0.5rem;
+	color: var(--text-muted);
+	font-size: 0.8rem;
+	margin: 0;
 }
 
 /* === Sidebar rows === */

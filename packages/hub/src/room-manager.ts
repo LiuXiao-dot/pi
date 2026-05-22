@@ -4,6 +4,7 @@ import {
 	AuthStorage,
 	type CreateAgentSessionResult,
 	createAgentSession,
+	DefaultResourceLoader,
 	findMostRecentSession,
 	getAgentDir,
 	ModelRegistry,
@@ -11,6 +12,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ResolvedHubModelsConfig, ResolvedHubRolesConfig } from "./config.ts";
 import { Room } from "./room.ts";
+import { buildRoomContext } from "./room-context.ts";
 import { RoomRegistry, RoomRegistryError, resolveRoomWorkspace } from "./room-registry.ts";
 
 export interface RoomManagerOptions {
@@ -103,9 +105,19 @@ export class RoomManager {
 	}
 
 	private async createRoomInstance(roomId: string): Promise<Room> {
-		const sessionResult = await this.createSessionForRoom(roomId);
 		const roomConfig = this.registry.loadRoomConfig(roomId);
 		const workspace = resolveRoomWorkspace(this.options.cwd, roomConfig);
+		const roomTitle = this.registry.getRoom(roomId)?.title;
+		const roomContextHolder = { text: "" };
+		roomContextHolder.text = buildRoomContext({
+			roomId,
+			title: roomTitle,
+			workspace,
+			cwd: this.options.cwd,
+			rolesConfig: { rolesDir: this.options.rolesConfig.rolesDir },
+			roomConfig,
+		});
+		const sessionResult = await this.createSessionForRoom(roomId, roomContextHolder);
 		const room = new Room({
 			roomId,
 			sessionResult,
@@ -114,13 +126,17 @@ export class RoomManager {
 			modelsConfig: this.options.modelsConfig,
 			roomConfig,
 			registry: this.registry,
+			roomContextHolder,
 		});
 		await room.start();
 		await room.applyConfiguredSessionModel();
 		return room;
 	}
 
-	private async createSessionForRoom(roomId: string): Promise<CreateAgentSessionResult> {
+	private async createSessionForRoom(
+		roomId: string,
+		roomContextHolder?: { text: string },
+	): Promise<CreateAgentSessionResult> {
 		const hubCwd = resolve(this.options.cwd);
 		const roomConfig = this.registry.loadRoomConfig(roomId);
 		const agentDir = this.options.agentDir ?? getAgentDir();
@@ -131,17 +147,26 @@ export class RoomManager {
 			return this.options.createSession(roomId, workspace, agentDir, sessionFile);
 		}
 
+		const appendOverride = roomContextHolder ? (base: string[]) => [roomContextHolder.text, ...base] : undefined;
+
 		if (this.options.sessionPath) {
 			const sessionFile = resolve(this.options.sessionPath);
 			const sessionManager = SessionManager.open(sessionFile, undefined, workspace);
 			const authStorage = AuthStorage.create(agentDir ? join(agentDir, "auth.json") : undefined);
 			const modelRegistry = ModelRegistry.create(authStorage, agentDir ? join(agentDir, "models.json") : undefined);
+			const resourceLoader = new DefaultResourceLoader({
+				cwd: workspace,
+				agentDir,
+				appendSystemPromptOverride: appendOverride,
+			});
+			await resourceLoader.reload();
 			return createAgentSession({
 				cwd: workspace,
 				agentDir,
 				authStorage,
 				modelRegistry,
 				sessionManager,
+				resourceLoader,
 			});
 		}
 
@@ -171,12 +196,19 @@ export class RoomManager {
 		const authStorage = AuthStorage.create(agentDir ? join(agentDir, "auth.json") : undefined);
 		const modelRegistry = ModelRegistry.create(authStorage, agentDir ? join(agentDir, "models.json") : undefined);
 
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: workspace,
+			agentDir,
+			appendSystemPromptOverride: appendOverride,
+		});
+		await resourceLoader.reload();
 		return createAgentSession({
 			cwd: workspace,
 			agentDir,
 			authStorage,
 			modelRegistry,
 			sessionManager,
+			resourceLoader,
 		});
 	}
 }

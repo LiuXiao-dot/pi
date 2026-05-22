@@ -8,6 +8,7 @@ import type {
 	HubModelsConfigPayload,
 	HubRoleMemory,
 	HubRoleSummaryEntry,
+	HubRoomInfo,
 	HubRoomSummary,
 	HubServerMessage,
 	HubSessionState,
@@ -3659,6 +3660,11 @@ function renderWorkspace(
 					refreshMessagesPanel();
 					updateRoomReplyRows();
 				}
+			}
+		}
+		if (msg.type === "room_info") {
+			if ((msg as { roomId?: string }).roomId === selectedRoomId) {
+				updateRoomInfo(msg as HubRoomInfo);
 			}
 		}
 		if (msg.type === "extension_ui_request") {
