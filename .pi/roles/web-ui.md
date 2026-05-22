@@ -1,4 +1,5 @@
 ---
+skills: pi-architecture, pi-hub, pi-web, ui-design-guide
 name: web-ui
 description: Builds and styles the pi Hub web UI (TypeScript, HTML, CSS)
 who: Frontend developer focused on the pi Hub web client
