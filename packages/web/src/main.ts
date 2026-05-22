@@ -459,7 +459,7 @@ function renderWorkspace(
 	const officeBtn = el("button", "secondary-btn");
 	officeBtn.type = "button";
 	officeBtn.textContent = "Office";
-	officeBtn.title = "Marvis 办公室 — view this room's role roster";
+	officeBtn.title = "Office — view this room's role roster";
 	officeBtn.onclick = () => {
 		if (!selectedRoomId) return;
 		void showOfficeModal(client, selectedRoomId, (targetRoomId) => {
@@ -468,7 +468,7 @@ function renderWorkspace(
 	};
 
 	// Header keeps brand + Roles + Office only. Sign-out moves into the
-	// sidebar account row at the bottom (Marvis layout).
+	// sidebar account row at the bottom.
 	topHeader.append(brand, rolesBtn, officeBtn);
 	shell.appendChild(topHeader);
 
@@ -497,7 +497,7 @@ function renderWorkspace(
 	const roomList = el("ul", "room-list");
 	roomRail.append(railHeader, roomToolbar, railErr, roomList);
 
-	// Account row pinned to the bottom of the sidebar (Marvis layout)
+	// Account row pinned to the bottom of the sidebar
 	const accountRow = el("div", "room-rail-account");
 	const accountAvatar = el("span", "room-rail-account-avatar");
 	accountAvatar.textContent = (session.displayName || "?").slice(0, 1).toUpperCase();
@@ -921,7 +921,7 @@ function renderWorkspace(
 	const messages = el("div", "messages");
 	panel.appendChild(messages);
 
-	// Hero panel shown when the conversation is empty (Marvis-style landing).
+	// Hero panel shown when the conversation is empty.
 	const heroEl = el("div", "chat-hero");
 	heroEl.innerHTML = "";
 	const heroMark = el("div", "chat-hero-mark");

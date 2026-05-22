@@ -4,14 +4,13 @@
 
 ### Added
 
-- Surfaces hub `mention_warning` broadcasts: when a sent message contains `@token` that doesn't match any room-assigned role or present user, the chat shows an info banner like `未识别的提及 @web-ui（已识别角色: pm）` so users notice typos / not-yet-assigned roles instead of silently being routed to the default agent.
+- Surfaces hub `mention_warning` broadcasts: when a sent message contains `@token` that doesn't match any room-assigned role or present user, the chat shows an info banner like `未识别的提及 @web-ui(已识别角色: pm)` so users notice typos / not-yet-assigned roles instead of silently being routed to the default agent.
 - Per-role-task cancel: swiping a role reply card in the room sidebar now actually cancels that single role subprocess (sends new `abort_task` message with `taskId`). Previously the swipe-to-cancel UI showed up on role cards but the click did nothing. Session replies still use the room-wide `abort`.
-- Marvis-inspired light theme is now the default palette in `style.css`: near-white surface (`#FAFAFA`), near-black text, single Marvis red-orange accent, capsule controls, and soft shadows. The previous dark palette is preserved under `body.theme-dark`.
+- Light theme is now the default palette in `style.css`: near-white surface (`#FAFAFA`), near-black text, single red-orange accent, capsule controls, and soft shadows. The previous dark palette is preserved under `body.theme-dark`.
 - Hero landing state shown when a room has no messages: centered brand mark, title, sub-line, and a 6-card suggested-task grid that fills the composer with a starter prompt on click. Hover lifts cards 2px and fades in a right-arrow.
 - Account row pinned to the bottom of the sidebar (avatar + name + Sign out); user/sign-out removed from the top header.
-- Empty or dot-only assistant replies now render an explicit warning bubble (“助手未返回正文内容”) instead of a silent empty bubble, so users get feedback when a model only emits an ellipsis.
-- Office (“Marvis 办公室”) modal showing the room's role roster on an isometric SVG workstation grid plus a stats side panel (active / available / rooms). Opened from a new `Office` button in the workspace header.
-- Redesign audit at `packages/web/docs/marvis-redesign.md` documenting gaps versus the Marvis reference and what shipped.
+- Empty or dot-only assistant replies now render an explicit warning bubble ("助手未返回正文内容") instead of a silent empty bubble, so users get feedback when a model only emits an ellipsis.
+- Office modal showing the room's role roster on an isometric SVG workstation grid plus a stats side panel (active / available / rooms). Opened from a new `Office` button in the workspace header.
 
 ### Changed
 

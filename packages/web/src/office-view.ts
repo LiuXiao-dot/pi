@@ -1,5 +1,5 @@
 /* =============================================================
- * Office view — "Marvis 办公室"
+ * Office view
  * -------------------------------------------------------------
  * Renders an isometric 4x4 grid of rooms. Each room tile shows
  * a small capsule character when the room is currently active
@@ -38,7 +38,7 @@ const SCARF_COLORS: { hex: string; name: string }[] = [
 const DAILY_TIPS: string[] = [
 	"今天也是 token+1 的一天 ☕",
 	"好的提示词，是你与模型的第一次握手",
-	"马维斯帮你保存了一杯咖啡的时间",
+	"帮你保存了一杯咖啡的时间",
 	"慢即是快——给上下文一点时间",
 	"今天的 bug 是明天的 feature",
 	"先描述目标，再描述步骤",
@@ -50,7 +50,7 @@ const DAILY_TIPS: string[] = [
 	"分而治之：一个房间一个项目",
 	"角色不在多，称手最重要",
 	"试试把任务拆成三步走",
-	"读不完？让马维斯帮你抓重点",
+	"读不完？帮你抓重点",
 	"今天的灵感，明天可能就忘了——记下来",
 	"屏幕外抬头看看，眼睛也需要 break",
 	"喝口水再继续，模型不会跑掉",
@@ -58,9 +58,9 @@ const DAILY_TIPS: string[] = [
 	"先跑通，再优化",
 	"小步快跑，大步会摔",
 	"一次只问一件事",
-	"不确定的时候，问马维斯",
+	"不确定的时候，问我",
 	"模型不读心，但读上下文",
-	"把今天的任务写下来，再交给马维斯",
+	"把今天的任务写下来，再交给我",
 	"复制别人的好提示，不丢人",
 	"耐心一点，结果会更好",
 	"困了？先睡，明天会更聪明",
@@ -131,7 +131,7 @@ function buildOfficeSVG(
 	const root = svg("svg", {
 		viewBox: "0 0 640 400",
 		role: "img",
-		"aria-label": "Marvis office rooms",
+		"aria-label": "Office rooms",
 	});
 
 	const total = Math.min(rooms.length, MAX_ROOMS);
@@ -302,7 +302,7 @@ function buildMascotSVG(scarfHex: string): SVGSVGElement {
 		viewBox: "-60 -70 120 150",
 		class: "mascot-svg",
 		role: "img",
-		"aria-label": "Marvis mascot",
+		"aria-label": "Mascot",
 	});
 
 	// shadow
@@ -444,7 +444,7 @@ async function loadOfficeData(client: HubClient, currentRoomId: string): Promise
 /* ---------- Public entry ---------- */
 
 /**
- * Show the Marvis-style "Office" modal for the given room.
+ * Show the "Office" modal for the given room.
  *
  * @param client          Hub client.
  * @param roomId          The currently-selected room id.
@@ -461,7 +461,7 @@ export async function showOfficeModal(
 	const modal = el("div", "modal office-modal");
 	modal.setAttribute("role", "dialog");
 	modal.setAttribute("aria-modal", "true");
-	modal.setAttribute("aria-label", "Marvis office");
+	modal.setAttribute("aria-label", "Office");
 
 	const previouslyFocused = document.activeElement as HTMLElement | null;
 
@@ -485,7 +485,7 @@ export async function showOfficeModal(
 	// Header
 	const header = el("div", "office-header");
 	const title = el("h3", "office-title");
-	title.textContent = "Marvis 办公室";
+	title.textContent = "Office";
 	const roomTag = el("span", "office-room");
 	roomTag.textContent = `room: ${roomId}`;
 	header.append(title, roomTag);
@@ -579,7 +579,7 @@ export async function showOfficeModal(
 	mascotLabel.textContent = "今日穿搭";
 	const mascotStage = el("button", "office-mascot-stage");
 	mascotStage.type = "button";
-	mascotStage.setAttribute("aria-label", `Marvis mascot, scarf: ${scarf.name}. Click for surprise.`);
+	mascotStage.setAttribute("aria-label", `Mascot, scarf: ${scarf.name}. Click for surprise.`);
 	mascotStage.appendChild(buildMascotSVG(scarf.hex));
 	mascotStage.addEventListener("click", () => playMascotEasterEgg(mascotStage));
 	const mascotCaption = el("p", "office-mascot-caption");

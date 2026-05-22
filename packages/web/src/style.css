@@ -1,5 +1,5 @@
 /* ==============================
-   pi Hub — Marvis-inspired light theme (default)
+   pi Hub — light theme (default)
    Add `class="theme-dark"` to <body> to use the legacy dark palette.
    ============================== */
 
@@ -20,7 +20,7 @@
   --text-body: #1f1f23;
   --text-muted: #6b6b73;
 
-  /* Accent — single Marvis red-orange (mascot scarf). No gradients. */
+  /* Accent — single red-orange. No gradients. */
   --accent: #e94b2b;
   --accent-blue: #e94b2b;
   --accent-pink: #e94b2b;
@@ -409,7 +409,7 @@ select {
   padding-right: 2rem;
 }
 
-/* === Gradient accent bar (Marvis-style) === */
+/* === Gradient accent bar === */
 .accent-bar {
   width: 100%;
   height: 2px;
@@ -975,7 +975,7 @@ select {
 }
 
 /* =================================
-   Role Info Panel (Marvis-style card)
+   Role Info Panel
    ================================= */
 
 .role-info-panel {
@@ -2037,10 +2037,10 @@ body.theme-dark .modal-backdrop {
 
 @media (prefers-reduced-motion: no-preference) {
   .modal {
-    animation: marvis-modal-in 220ms var(--ease-out);
+    animation: modal-in 220ms var(--ease-out);
   }
   .modal-backdrop {
-    animation: marvis-fade-in 180ms var(--ease-out);
+    animation: fade-in 180ms var(--ease-out);
   }
 }
 
@@ -2730,7 +2730,7 @@ body.theme-dark .modal-backdrop {
 }
 
 /* =================================
-   Marvis polish (default light theme)
+   Polish (default light theme)
    ================================= */
 
 /* Brand mark dot in front of "pi Hub" */
@@ -2797,7 +2797,7 @@ textarea:focus {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-/* Chat bubbles — Marvis pill / soft card */
+/* Chat bubbles — pill / soft card */
 .msg.user .msg-body,
 .msg.user-msg .msg-body,
 .msg.user .bubble,
@@ -2832,11 +2832,11 @@ textarea:focus {
 }
 
 /* Modal animation keyframes */
-@keyframes marvis-modal-in {
+@keyframes modal-in {
   from { opacity: 0; transform: translateY(8px) scale(0.97); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
-@keyframes marvis-fade-in {
+@keyframes fade-in {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
@@ -2932,7 +2932,7 @@ textarea:focus {
   flex: 1;
   text-align: center;
   gap: 1.25rem;
-  animation: marvis-fade-in var(--duration-normal) var(--ease-out);
+  animation: fade-in var(--duration-normal) var(--ease-out);
 }
 .chat-hero-mark {
   width: 64px;
@@ -3048,7 +3048,7 @@ textarea:focus {
   color: var(--bg-surface);
 }
 
-/* Office (Marvis 办公室) modal */
+/* Office modal */
 .office-modal {
   width: min(960px, calc(100vw - 2rem));
   max-height: calc(100vh - 4rem);
