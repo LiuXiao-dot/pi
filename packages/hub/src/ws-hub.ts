@@ -16,6 +16,32 @@ export interface WsHubOptions {
 	cwd: string;
 }
 
+type PiTaggedWebSocket = WebSocket & {
+	__piRoom?: Room;
+	__piClient?: { id: string; displayName: string };
+	__piOnClose?: () => void;
+};
+
+function asPiTagged(ws: WebSocket): PiTaggedWebSocket {
+	return ws as PiTaggedWebSocket;
+}
+
+/** At most one close listener per socket; leave/rejoin must not stack handlers. */
+function detachCloseHandler(ws: PiTaggedWebSocket): void {
+	const handler = ws.__piOnClose;
+	if (!handler) {
+		return;
+	}
+	ws.off("close", handler);
+	ws.__piOnClose = undefined;
+}
+
+function attachCloseHandler(ws: PiTaggedWebSocket, handler: () => void): void {
+	detachCloseHandler(ws);
+	ws.__piOnClose = handler;
+	ws.on("close", handler);
+}
+
 export class WsHub {
 	private readonly wss: WebSocketServer;
 	private readonly server: ReturnType<typeof createServer>;
@@ -87,8 +113,9 @@ export class WsHub {
 			return;
 		}
 
-		const room = (ws as WebSocket & { __piRoom?: Room }).__piRoom;
-		const client = (ws as WebSocket & { __piClient?: { id: string; displayName: string } }).__piClient;
+		const tagged = asPiTagged(ws);
+		const room = tagged.__piRoom;
+		const client = tagged.__piClient;
 		if (!room || !client) {
 			this.send(ws, { type: "error", code: "not_joined", message: "Send join before other commands" });
 			return;
@@ -104,7 +131,8 @@ export class WsHub {
 	}
 
 	private async handleJoin(ws: WebSocket, message: Extract<HubClientMessage, { type: "join" }>): Promise<void> {
-		if ((ws as WebSocket & { __piRoom?: Room }).__piRoom) {
+		const tagged = asPiTagged(ws);
+		if (tagged.__piRoom) {
 			this.send(ws, { type: "error", code: "already_joined", message: "Already joined" });
 			return;
 		}
@@ -128,25 +156,23 @@ export class WsHub {
 			const room = await this.options.roomManager.getOrCreateRoom(roomId);
 			const client = room.addClient(ws, message.displayName);
 
-			const tagged = ws as WebSocket & {
-				__piRoom?: Room;
-				__piClient?: { id: string; displayName: string };
-				__piOnClose?: () => void;
-			};
-			tagged.__piOnClose?.();
-			const onClose = () => {
-				room.removeClient(client.id);
-			};
-			tagged.__piOnClose = onClose;
 			tagged.__piRoom = room;
 			tagged.__piClient = {
 				id: client.id,
 				displayName: client.displayName,
 			};
+			attachCloseHandler(tagged, () => {
+				const activeRoom = tagged.__piRoom;
+				const activeClient = tagged.__piClient;
+				if (activeRoom && activeClient) {
+					activeRoom.removeClient(activeClient.id);
+				}
+				detachCloseHandler(tagged);
+				delete tagged.__piRoom;
+				delete tagged.__piClient;
+			});
 
 			room.sendJoined(client);
-
-			ws.on("close", onClose);
 		} catch (err) {
 			const code = err instanceof RoomRegistryError ? err.code : "join_failed";
 			const messageText = err instanceof Error ? err.message : String(err);
@@ -161,11 +187,7 @@ export class WsHub {
 	}
 
 	private handleLeave(ws: WebSocket): void {
-		const tagged = ws as WebSocket & {
-			__piRoom?: Room;
-			__piClient?: { id: string; displayName: string };
-			__piOnClose?: () => void;
-		};
+		const tagged = asPiTagged(ws);
 		const room = tagged.__piRoom;
 		const clientMeta = tagged.__piClient;
 		if (!room || !clientMeta) {
@@ -173,8 +195,8 @@ export class WsHub {
 			return;
 		}
 		const roomId = room.roomId;
+		detachCloseHandler(tagged);
 		room.removeClient(clientMeta.id);
-		tagged.__piOnClose = undefined;
 		delete tagged.__piRoom;
 		delete tagged.__piClient;
 		this.send(ws, { type: "left", roomId });
