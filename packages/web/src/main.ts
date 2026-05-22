@@ -1543,7 +1543,13 @@ function renderWorkspace(
 		const existing = li.querySelector(".room-role-sub-rows");
 		if (existing) existing.remove();
 
-		const rows: Array<{ label: string; phase: string; onClick: () => void }> = [];
+		interface ReplyRowItem {
+			label: string;
+			phase: string;
+			onClick: () => void;
+			canCancel: boolean; // show cancel on swipe for running replies
+		}
+		const rows: ReplyRowItem[] = [];
 
 		// Session model reply row
 		if (roomBusy && selectedRoomId) {
@@ -1551,12 +1557,12 @@ function renderWorkspace(
 				label: `[session] ${statusModelSuffix}`,
 				phase: "replying",
 				onClick: () => {
-					// Load current session messages from the latest reply store entry
 					if (sessionReplyId && replyStore.has(sessionReplyId)) {
 						const reply = replyStore.get(sessionReplyId)!;
 						renderHistory(reply.messages);
 					}
 				},
+				canCancel: true,
 			});
 		}
 
@@ -1580,6 +1586,7 @@ function renderWorkspace(
 						scrollMessagesToBottom(true);
 					}
 				},
+				canCancel: true,
 			});
 		}
 
@@ -1587,6 +1594,8 @@ function renderWorkspace(
 
 		const container = el("div", "room-role-sub-rows");
 		for (const r of rows) {
+			const wrap = el("div", "reply-swipe-wrap");
+
 			const subRow = el("button", "room-role-sub-row");
 			subRow.type = "button";
 
@@ -1599,7 +1608,107 @@ function renderWorkspace(
 				e.stopPropagation();
 				r.onClick();
 			};
-			container.appendChild(subRow);
+			wrap.appendChild(subRow);
+
+			// Cancel button (behind the row, revealed on swipe left)
+			if (r.canCancel) {
+				const cancelBtn = el("button", "reply-swipe-cancel");
+				cancelBtn.type = "button";
+				cancelBtn.textContent = "Cancel";
+				cancelBtn.style.position = "absolute";
+				cancelBtn.style.right = "0";
+				cancelBtn.style.top = "0";
+				cancelBtn.style.bottom = "0";
+				cancelBtn.style.width = "64px";
+				cancelBtn.style.display = "flex";
+				cancelBtn.style.alignItems = "center";
+				cancelBtn.style.justifyContent = "center";
+				cancelBtn.style.background = "var(--error)";
+				cancelBtn.style.color = "#fff";
+				cancelBtn.style.border = "none";
+				cancelBtn.style.borderRadius = "0 var(--radius-sm) var(--radius-sm) 0";
+				cancelBtn.style.fontSize = "0.65rem";
+				cancelBtn.style.fontWeight = "500";
+				cancelBtn.style.cursor = "pointer";
+				cancelBtn.style.opacity = "0";
+				cancelBtn.style.pointerEvents = "none";
+				cancelBtn.style.transition = "opacity var(--duration-fast) ease";
+				cancelBtn.style.zIndex = "1";
+				cancelBtn.style.position = "absolute";
+				cancelBtn.style.right = "0";
+				cancelBtn.style.top = "0";
+				cancelBtn.style.bottom = "0";
+				cancelBtn.style.width = "64px";
+
+				cancelBtn.onclick = (e) => {
+					e.stopPropagation();
+					if (!client.isJoined()) return;
+					client.abort();
+					roomBusy = false;
+					updateSleepButton();
+					renderRoleSubRows(activeRoomLi!);
+				};
+
+				// Swipe logic on wrap
+				let sStartX = 0;
+				let sCurrentX = 0;
+				let sPointerId = -1;
+				let sDragging = false;
+				const S_THRESH = 64;
+
+				wrap.addEventListener("pointerdown", (ev) => {
+					sStartX = ev.clientX;
+					sCurrentX = sStartX;
+					sDragging = false;
+					sPointerId = ev.pointerId;
+				});
+				wrap.addEventListener("pointermove", (ev) => {
+					if (sPointerId < 0) return;
+					const dx = ev.clientX - sStartX;
+					if (!sDragging && Math.abs(dx) < 8) return;
+					if (!sDragging) {
+						sDragging = true;
+						wrap.setPointerCapture(sPointerId);
+					}
+					sCurrentX = ev.clientX;
+					if (dx <= 0) {
+						wrap.style.transform = `translateX(${Math.max(dx, -S_THRESH)}px)`;
+						cancelBtn.style.opacity = String(Math.min(1, Math.abs(dx) / S_THRESH));
+					} else {
+						wrap.style.transform = "translateX(0)";
+						cancelBtn.style.opacity = "0";
+					}
+				});
+				wrap.addEventListener("pointerup", (ev) => {
+					if (sPointerId < 0) return;
+					sPointerId = -1;
+					if (sDragging) {
+						const dx = sCurrentX - sStartX;
+						if (dx < -S_THRESH / 2) {
+							wrap.style.transform = `translateX(-${S_THRESH}px)`;
+							cancelBtn.style.opacity = "1";
+							cancelBtn.style.pointerEvents = "auto";
+						} else {
+							wrap.style.transform = "translateX(0)";
+							cancelBtn.style.opacity = "0";
+							cancelBtn.style.pointerEvents = "none";
+						}
+						try {
+							wrap.releasePointerCapture(ev.pointerId);
+						} catch {}
+					}
+					sStartX = 0;
+					sCurrentX = 0;
+				});
+				wrap.addEventListener("pointercancel", () => {
+					sPointerId = -1;
+					sDragging = false;
+				});
+
+				wrap.appendChild(cancelBtn);
+			}
+
+			container.appendChild(wrap);
 		}
 		li.appendChild(container);
 	}
