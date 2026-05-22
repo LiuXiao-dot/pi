@@ -4,6 +4,7 @@
 
 ### Added
 
+- Per-role-task cancel: swiping a role reply card in the room sidebar now actually cancels that single role subprocess (sends new `abort_task` message with `taskId`). Previously the swipe-to-cancel UI showed up on role cards but the click did nothing. Session replies still use the room-wide `abort`.
 - Marvis-inspired light theme is now the default palette in `style.css`: near-white surface (`#FAFAFA`), near-black text, single Marvis red-orange accent, capsule controls, and soft shadows. The previous dark palette is preserved under `body.theme-dark`.
 - Hero landing state shown when a room has no messages: centered brand mark, title, sub-line, and a 6-card suggested-task grid that fills the composer with a starter prompt on click. Hover lifts cards 2px and fades in a right-arrow.
 - Account row pinned to the bottom of the sidebar (avatar + name + Sign out); user/sign-out removed from the top header.

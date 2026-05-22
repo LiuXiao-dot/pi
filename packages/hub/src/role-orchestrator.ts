@@ -98,6 +98,24 @@ function combineContextPrefix(...parts: (string | undefined)[]): string | undefi
 	return merged.length > 0 ? merged.join("\n\n") : undefined;
 }
 
+function createLinkedController(parent?: AbortSignal): AbortController {
+	const controller = new AbortController();
+	if (parent) {
+		if (parent.aborted) {
+			controller.abort(parent.reason);
+		} else {
+			parent.addEventListener(
+				"abort",
+				() => {
+					controller.abort(parent.reason);
+				},
+				{ once: true },
+			);
+		}
+	}
+	return controller;
+}
+
 export class RoleOrchestrator {
 	private readonly session: AgentSession;
 	private readonly cwd: string;
@@ -109,6 +127,7 @@ export class RoleOrchestrator {
 	private readonly agentDir: string;
 	private readonly getRoleModelOverrides: () => Record<string, string>;
 	private readonly runRole: typeof runRoleSubprocess;
+	private readonly taskAborts = new Map<string, AbortController>();
 
 	constructor(options: RoleOrchestratorOptions) {
 		this.session = options.session;
@@ -121,6 +140,31 @@ export class RoleOrchestrator {
 		this.agentDir = options.agentDir ?? getAgentDir();
 		this.getRoleModelOverrides = options.getRoleModelOverrides;
 		this.runRole = options.runRole ?? runRoleSubprocess;
+	}
+
+	/**
+	 * Abort a single in-flight role task by its taskId. Returns true when a
+	 * matching controller was found and aborted, false otherwise.
+	 */
+	abortTask(taskId: string): boolean {
+		const controller = this.taskAborts.get(taskId);
+		if (!controller) return false;
+		controller.abort();
+		return true;
+	}
+
+	private async runTrackedTask<T>(
+		taskId: string,
+		parentSignal: AbortSignal | undefined,
+		fn: (signal: AbortSignal) => Promise<T>,
+	): Promise<T> {
+		const controller = createLinkedController(parentSignal);
+		this.taskAborts.set(taskId, controller);
+		try {
+			return await fn(controller.signal);
+		} finally {
+			this.taskAborts.delete(taskId);
+		}
 	}
 
 	private roomSkillsDir(): string {
@@ -273,15 +317,17 @@ export class RoleOrchestrator {
 						}
 						const contextPrefix = combineContextPrefix(...contextParts);
 
-						const runResult = await this.runRole({
-							role,
-							task: task.task,
-							cwd: this.cwd,
-							agentDir: this.agentDir,
-							contextPrefix,
-							signal,
-							roomSkillsDir: this.roomSkillsDir(),
-						});
+						const runResult = await this.runTrackedTask(taskId, signal, (taskSignal) =>
+							this.runRole({
+								role,
+								task: task.task,
+								cwd: this.cwd,
+								agentDir: this.agentDir,
+								contextPrefix,
+								signal: taskSignal,
+								roomSkillsDir: this.roomSkillsDir(),
+							}),
+						);
 
 						const failed = runResult.exitCode !== 0;
 						const preview =
@@ -329,15 +375,17 @@ export class RoleOrchestrator {
 
 				this.onBroadcast({ type: "role_progress", role: role.name, taskId, phase: "started" });
 
-				const runResult = await this.runRole({
-					role,
-					task: userMessage,
-					cwd: this.cwd,
-					agentDir: this.agentDir,
-					contextPrefix: roomContext,
-					signal,
-					roomSkillsDir: this.roomSkillsDir(),
-				});
+				const runResult = await this.runTrackedTask(taskId, signal, (taskSignal) =>
+					this.runRole({
+						role,
+						task: userMessage,
+						cwd: this.cwd,
+						agentDir: this.agentDir,
+						contextPrefix: roomContext,
+						signal: taskSignal,
+						roomSkillsDir: this.roomSkillsDir(),
+					}),
+				);
 
 				const failed = runResult.exitCode !== 0;
 				const preview = runResult.output.length > 200 ? `${runResult.output.slice(0, 200)}...` : runResult.output;

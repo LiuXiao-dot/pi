@@ -1963,6 +1963,9 @@ function renderWorkspace(
 				client.abort();
 				roomBusy = false;
 				updateSleepButton();
+			} else if (entry.kind === "role") {
+				const taskId = entry.id.startsWith("role:") ? entry.id.slice("role:".length) : "";
+				if (taskId) client.abortTask(taskId);
 			}
 			wrap.style.transform = "translateX(0)";
 			cancelBtn.style.opacity = "0";
@@ -3215,6 +3218,7 @@ function renderWorkspace(
 	};
 
 	input.addEventListener("keydown", (e) => {
+		if (e.defaultPrevented) return;
 		if (e.key === "Enter" && !e.shiftKey) {
 			e.preventDefault();
 			sendBtn.click();

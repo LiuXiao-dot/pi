@@ -121,6 +121,7 @@ export type HubClientMessage =
 	| { type: "steer"; id?: string; message: string; images?: ImageContent[] }
 	| { type: "follow_up"; id?: string; message: string; images?: ImageContent[] }
 	| { type: "abort"; id?: string }
+	| { type: "abort_task"; id?: string; taskId: string }
 	| { type: "leave" }
 	| { type: "get_state"; id?: string }
 	| { type: "get_available_models"; id?: string }

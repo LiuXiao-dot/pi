@@ -13,6 +13,7 @@
 
 ### Added
 
+- Per-task role cancellation: new `abort_task` client message lets a client cancel a single in-flight role subprocess by `taskId` without aborting the rest of the room. `RoleOrchestrator` now tracks an `AbortController` per task and exposes `abortTask(taskId)`. The room-wide `abort` still cancels everything (parent signal is linked to each task).
 - Persisted role memories are now read back into the role's run context: `runRoleSubprocess` injects up to N most-recent memories (default 10) into `contextPrefix`, so sleeping a room actually makes future role runs aware of past goals/results. New helper `loadRecentRoleMemory(cwd, name, limit)`.
 - New protocol message `room_session_cleared` broadcast after rebirth and sleep so every client (not just the initiator) drops local reply / turn indices for the cleared session.
 - `sleep_done` now carries `success: boolean` and an optional `error` string, replacing the prior "empty memories looks like a no-op" ambiguity.

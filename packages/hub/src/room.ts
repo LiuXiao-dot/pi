@@ -59,6 +59,7 @@ export class Room {
 	private roomConfig: RoomConfigFile;
 	private roleModelOverrides: Record<string, string>;
 	private queueAbortController: AbortController | null = null;
+	private readonly roleOrchestrator: RoleOrchestrator | undefined;
 	private readonly clients = new Map<string, RoomClient>();
 	private unsubscribeSession: (() => void) | undefined;
 	private readonly extensionUi: ExtensionUiRouter;
@@ -91,6 +92,7 @@ export class Room {
 					onBroadcast: (msg) => this.broadcastRoleEvent(msg),
 				})
 			: undefined;
+		this.roleOrchestrator = roleOrchestrator;
 
 		this.queue = new PromptQueue(
 			this.session,
@@ -370,6 +372,21 @@ export class Room {
 				} catch (err) {
 					const msg = err instanceof Error ? err.message : String(err);
 					this.sendCommandResult(client, "abort", message.id, false, msg);
+				}
+				return;
+			}
+
+			case "abort_task": {
+				const taskId = typeof message.taskId === "string" ? message.taskId : "";
+				if (!taskId) {
+					this.sendCommandResult(client, "abort_task", message.id, false, "taskId required");
+					return;
+				}
+				const aborted = this.roleOrchestrator?.abortTask(taskId) ?? false;
+				if (aborted) {
+					this.sendCommandResult(client, "abort_task", message.id, true);
+				} else {
+					this.sendCommandResult(client, "abort_task", message.id, false, "task not found");
 				}
 				return;
 			}

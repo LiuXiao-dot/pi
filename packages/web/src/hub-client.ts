@@ -383,6 +383,10 @@ export class HubClient {
 		this.send({ type: "abort" });
 	}
 
+	abortTask(taskId: string): void {
+		this.send({ type: "abort_task", taskId });
+	}
+
 	async sleepRoom(roomId: string): Promise<void> {
 		await this.sendCommand({
 			type: "sleep_room",
