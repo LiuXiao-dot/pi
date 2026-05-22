@@ -15,10 +15,11 @@
 		<link rel="stylesheet" href="/src/style.css" />
 	</head>
 	<body>
-		<!-- Loading Screen (shown initially, replaced on app mount) -->
 		<div id="loading-screen" class="loading-screen">
 			<div class="loading-logo">
-				<div class="loading-logo-inner">&pi;</div>
+				<img class="loading-logo-img" src="./assets/logo-head.png" alt="pi"
+					onerror="this.style.display='none';this.nextElementSibling.style.display=''" />
+				<div class="loading-logo-inner" style="display:none">&pi;</div>
 			</div>
 			<div class="loading-bar-track">
 				<div class="loading-bar-fill"></div>

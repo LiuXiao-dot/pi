@@ -259,7 +259,7 @@ function renderWorkspace(
 	shell.appendChild(accentBar);
 
 	const topHeader = el("header", "workspace-header");
-	const brand = el("span", "workspace-brand");
+	const brand = el("span", "workspace-brand workspace-brand-accent");
 	brand.textContent = "pi Hub";
 
 	const rolesBtn = el("button", "secondary-btn");
@@ -294,27 +294,7 @@ function renderWorkspace(
 	const createBtn = el("button", "secondary-btn");
 	createBtn.type = "button";
 	createBtn.textContent = "Create";
-	const rebirthBtn = el("button", "secondary-btn danger-btn");
-	rebirthBtn.type = "button";
-	rebirthBtn.textContent = "重生";
-	rebirthBtn.title = "Clear current room conversation";
-	rebirthBtn.onclick = () => {
-		if (!selectedRoomId || !client.isJoined()) return;
-		if (!confirm("Clear all messages in this room?")) return;
-		void (async () => {
-			try {
-				await client.clearRoomSession(selectedRoomId!);
-			} catch (e) {
-				showRailError(e instanceof Error ? e.message : String(e));
-			}
-		})();
-	};
-	const sleepBtn = el("button", "secondary-btn");
-	sleepBtn.type = "button";
-	sleepBtn.textContent = "睡觉";
-	sleepBtn.title = "Sleep mode (coming soon)";
-	sleepBtn.disabled = true;
-	roomToolbar.append(newRoomInput, createBtn, rebirthBtn, sleepBtn);
+	roomToolbar.append(newRoomInput, createBtn);
 
 	const railErr = el("div", "error-banner hidden");
 	const roomList = el("ul", "room-list");
@@ -577,6 +557,42 @@ function renderWorkspace(
 	roomLabel.textContent = selectedRoomId ?? "Select a room";
 	headerBrand.appendChild(roomLabel);
 	headerBrand.appendChild(roomSettingsBtn);
+
+	const lifeWrap = el("div", "life-btn-wrap");
+	const lifeBtn = el("button", "secondary-btn");
+	lifeBtn.type = "button";
+	lifeBtn.textContent = "生命";
+	const lifePopup = el("div", "life-popup hidden");
+	const rebirthItem = el("button", "life-popup-item danger");
+	rebirthItem.textContent = "重生";
+	rebirthItem.onclick = (e) => {
+		e.stopPropagation();
+		lifePopup.classList.add("hidden");
+		if (!selectedRoomId || !client.isJoined()) return;
+		if (!confirm("Clear all messages in this room?")) return;
+		void (async () => {
+			try {
+				await client.clearRoomSession(selectedRoomId!);
+			} catch (e) {
+				showError(e instanceof Error ? e.message : String(e));
+			}
+		})();
+	};
+	const sleepItem = el("button", "life-popup-item");
+	sleepItem.textContent = "睡觉";
+	sleepItem.disabled = true;
+	lifePopup.append(rebirthItem, sleepItem);
+	lifeBtn.onclick = (e) => {
+		e.stopPropagation();
+		lifePopup.classList.toggle("hidden");
+	};
+	document.addEventListener("click", (e) => {
+		if (!lifeWrap.contains(e.target as Node)) {
+			lifePopup.classList.add("hidden");
+		}
+	});
+	lifeWrap.append(lifeBtn, lifePopup);
+	headerBrand.appendChild(lifeWrap);
 
 	const statusWrap = el("div", "status-wrap");
 	const statusDot = el("span", "status-dot connecting");
@@ -1337,22 +1353,52 @@ function renderWorkspace(
 	}): void {
 		const backdrop = el("div", "modal-backdrop");
 		const modal = el("div", "modal");
+		modal.style.maxWidth = "600px";
 
-		const title = el("h3");
-		title.textContent = `Role: ${role.roleName}`;
-		modal.appendChild(title);
+		// Role info panel header
+		const panel = el("div", "role-info-panel");
 
-		const status = el("p", "role-output-status");
-		status.textContent = `Status: ${role.phase}`;
-		status.style.cssText = role.phase === "failed" ? "color: var(--error);" : "color: var(--success);";
-		modal.appendChild(status);
+		const header = el("div", "role-info-header");
+		const icon = el("div", "role-info-icon");
+		icon.textContent = "⚙";
+		const titleGroup = el("div");
+		const title = el("div", "role-info-title");
+		title.textContent = role.roleName;
+		const subtitle = el("div", "role-info-subtitle");
+		subtitle.textContent = "Role output";
+		titleGroup.append(title, subtitle);
 
-		const pre = el("pre", "role-output-content");
-		pre.textContent = role.fullOutput ?? role.preview ?? "(no output)";
-		pre.style.cssText =
-			"max-height:60vh;overflow-y:auto;white-space:pre-wrap;font-family:var(--mono);font-size:0.75rem;line-height:1.5;padding:0.75rem;background:var(--canvas);border-radius:var(--radius-md);border:1px solid var(--border);";
-		modal.appendChild(pre);
+		const statusWrap = el("div", "role-info-status");
+		const statusDot = el("span", "role-info-status-dot");
+		const isRunning = role.phase === "started";
+		const isDone = role.phase === "done";
+		const isFailed = role.phase === "failed";
+		statusDot.style.backgroundColor = isFailed ? "var(--error)" : isDone ? "var(--success)" : "#fbbf24";
+		if (isRunning) {
+			statusDot.style.animation = "pulse-dot 1.2s ease-in-out infinite";
+		} else if (isDone) {
+			statusDot.style.boxShadow = "0 0 6px var(--success-glow)";
+		}
+		const statusText = el("span");
+		statusText.textContent = isFailed ? "Failed" : isDone ? "Completed" : isRunning ? "Running" : role.phase;
+		statusText.style.color = isFailed ? "var(--error)" : isDone ? "var(--success)" : "#fbbf24";
+		statusWrap.append(statusDot, statusText);
+		header.append(icon, titleGroup, statusWrap);
 
+		// Meta row
+		const metaRow = el("div", "role-info-meta");
+		const phaseItem = el("span", "role-info-meta-item");
+		phaseItem.textContent = `Phase: ${role.phase}`;
+		metaRow.appendChild(phaseItem);
+
+		// Body
+		const body = el("div", "role-info-body");
+		body.textContent = role.fullOutput ?? role.preview ?? "(no output)";
+
+		panel.append(header, metaRow, body);
+		modal.appendChild(panel);
+
+		// Actions
 		const actions = el("div", "modal-actions");
 		const closeBtn = el("button", "primary-btn");
 		closeBtn.textContent = "Close";
@@ -1603,16 +1649,6 @@ function renderWorkspace(
 		return div;
 	}
 
-	function extractConclusion(text: string): string {
-		if (!text) return "";
-		const parts = text.split(/\n\n+/);
-		const last = parts[parts.length - 1]!.trim();
-		if (last.length > 150) {
-			return `${last.slice(0, 150)}\u2026`;
-		}
-		return last;
-	}
-
 	function appendCollapsibleAssistantMsg(
 		text: string,
 		isStreaming: boolean,
@@ -1627,7 +1663,7 @@ function renderWorkspace(
 		avatar.textContent = ASSISTANT_AVATAR;
 		avatar.setAttribute("aria-hidden", "true");
 		const label = el("span", "msg-collapse-label");
-		label.textContent = isStreaming ? "Replying\u2026" : extractConclusion(text);
+		label.textContent = isStreaming ? "Replying\u2026" : "Response";
 		header.append(toggle, avatar, label);
 		if (meta) {
 			const metaDiv = el("div", "meta");
@@ -1636,24 +1672,47 @@ function renderWorkspace(
 		}
 		const body = el("div", "msg-collapse-body hidden");
 		body.textContent = text || "\u22ef";
+		const conclusion = el("div", "msg-collapse-conclusion");
 		let expanded = false;
 		header.addEventListener("click", () => {
 			expanded = !expanded;
 			body.classList.toggle("hidden", !expanded);
 			toggle.textContent = expanded ? "\u25bc" : "\u25b6";
 		});
-		div.append(header, body);
+		div.append(header, body, conclusion);
 		messages.appendChild(div);
+		if (!isStreaming) {
+			finalizeCollapsibleAssistantMsg(div);
+		}
 		scrollMessagesToBottom();
 		return div;
 	}
 
-	function updateCollapsibleAssistantLabel(el: HTMLElement): void {
+	function finalizeCollapsibleAssistantMsg(el: HTMLElement): void {
 		const body = el.querySelector(".msg-collapse-body") as HTMLElement | null;
+		const header = el.querySelector(".msg-collapse-header") as HTMLElement | null;
+		const conclusion = el.querySelector(".msg-collapse-conclusion") as HTMLElement | null;
 		const label = el.querySelector(".msg-collapse-label") as HTMLElement | null;
-		if (body && label) {
-			const fullText = body.textContent ?? "";
-			label.textContent = extractConclusion(fullText);
+		if (!body || !conclusion) return;
+
+		const fullText = body.textContent ?? "";
+		const lastBreak = fullText.lastIndexOf("\n\n");
+
+		if (lastBreak <= 0) {
+			// Single paragraph: hide collapsible, show text in conclusion
+			if (header) header.style.display = "none";
+			body.classList.add("hidden");
+			conclusion.textContent = fullText;
+			return;
+		}
+
+		const beforeConclusion = fullText.slice(0, lastBreak);
+		const conclusionText = fullText.slice(lastBreak + 2);
+
+		body.textContent = beforeConclusion || "\u22ef";
+		conclusion.textContent = conclusionText;
+		if (label) {
+			label.textContent = "Response";
 		}
 	}
 
@@ -1879,7 +1938,9 @@ function renderWorkspace(
 					);
 				} else if (streamingAssistantEl) {
 					updateStreamingAssistant(event.message, hostDisplayName);
-					updateCollapsibleAssistantLabel(streamingAssistantEl);
+				}
+				if (streamingAssistantEl) {
+					finalizeCollapsibleAssistantMsg(streamingAssistantEl);
 				}
 				streamingAssistantEl = null;
 				streamingAssistantHost = null;

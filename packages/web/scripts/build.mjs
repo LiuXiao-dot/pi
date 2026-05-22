@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -37,5 +37,10 @@ const html = readFileSync(join(pkgRoot, "index.html"), "utf8")
 	.replace('/src/main.ts', './main.js');
 writeFileSync(join(outDir, "index.html"), html);
 copyFileSync(join(pkgRoot, "src", "style.css"), join(outDir, "style.css"));
+
+// Copy assets directory
+const assetsDir = join(pkgRoot, "src", "assets");
+const assetsOut = join(outDir, "assets");
+cpSync(assetsDir, assetsOut, { recursive: true });
 
 console.log("Built pi-web to", outDir);
