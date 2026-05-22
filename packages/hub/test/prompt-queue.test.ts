@@ -89,4 +89,26 @@ describe("PromptQueue", () => {
 		await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1), { timeout: 5000 });
 		expect(session.prompt).not.toHaveBeenCalled();
 	});
+
+	it("calls onQueueError when a prompt fails", async () => {
+		const { session } = createMockSession();
+		session.prompt = vi.fn(async () => {
+			throw new Error("model unavailable");
+		});
+		const onQueueError = vi.fn();
+		const queue = new PromptQueue(session as never, () => {}, { onQueueError });
+
+		queue.enqueue({
+			command: "prompt",
+			clientId: "a",
+			displayName: "A",
+			message: "fail",
+		});
+
+		await vi.waitFor(() => expect(onQueueError).toHaveBeenCalledTimes(1), { timeout: 5000 });
+		expect(onQueueError).toHaveBeenCalledWith(
+			expect.objectContaining({ displayName: "A", message: "fail" }),
+			"model unavailable",
+		);
+	});
 });

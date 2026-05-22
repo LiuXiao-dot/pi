@@ -8,6 +8,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { normalizeImageContentBlock } from "../utils/image-mime.ts";
 
 const NON_VISION_USER_IMAGE_PLACEHOLDER = "(image omitted: model does not support images)";
 const NON_VISION_TOOL_IMAGE_PLACEHOLDER = "(tool image omitted: model does not support images)";
@@ -30,6 +31,26 @@ function replaceImagesWithPlaceholder(content: (TextContent | ImageContent)[], p
 	}
 
 	return result;
+}
+
+function normalizeImageMimeTypes(messages: Message[]): Message[] {
+	return messages.map((msg) => {
+		if (msg.role === "user" && Array.isArray(msg.content)) {
+			return {
+				...msg,
+				content: msg.content.map((block) => (block.type === "image" ? normalizeImageContentBlock(block) : block)),
+			};
+		}
+
+		if (msg.role === "toolResult") {
+			return {
+				...msg,
+				content: msg.content.map((block) => (block.type === "image" ? normalizeImageContentBlock(block) : block)),
+			};
+		}
+
+		return msg;
+	});
 }
 
 function downgradeUnsupportedImages<TApi extends Api>(messages: Message[], model: Model<TApi>): Message[] {
@@ -68,7 +89,7 @@ export function transformMessages<TApi extends Api>(
 ): Message[] {
 	// Build a map of original tool call IDs to normalized IDs
 	const toolCallIdMap = new Map<string, string>();
-	const imageAwareMessages = downgradeUnsupportedImages(messages, model);
+	const imageAwareMessages = downgradeUnsupportedImages(normalizeImageMimeTypes(messages), model);
 
 	// First pass: transform messages (unsupported image downgrade, thinking blocks, tool call ID normalization)
 	const transformed = imageAwareMessages.map((msg) => {

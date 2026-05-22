@@ -27,6 +27,7 @@ export interface PromptQueueOptions {
 	getAbortSignal?: () => AbortSignal | undefined;
 	onTurnStart?: () => void;
 	onTurnEnd?: () => void;
+	onQueueError?: (item: QueueItem, message: string) => void;
 }
 
 export class PromptQueue {
@@ -41,6 +42,7 @@ export class PromptQueue {
 	private readonly getAbortSignal: (() => AbortSignal | undefined) | undefined;
 	private readonly onTurnStart: (() => void) | undefined;
 	private readonly onTurnEnd: (() => void) | undefined;
+	private readonly onQueueError: ((item: QueueItem, message: string) => void) | undefined;
 
 	constructor(session: AgentSession, onUpdate: QueueUpdateListener, options?: PromptQueueOptions) {
 		this.session = session;
@@ -49,6 +51,7 @@ export class PromptQueue {
 		this.getAbortSignal = options?.getAbortSignal;
 		this.onTurnStart = options?.onTurnStart;
 		this.onTurnEnd = options?.onTurnEnd;
+		this.onQueueError = options?.onQueueError;
 	}
 
 	getTurnOriginClientId(): string | null {
@@ -147,6 +150,7 @@ export class PromptQueue {
 							? ` @roles=${item.mentionedRoles.join(",")}`
 							: "";
 					console.error(`[pi-hub] queue item failed${who}${roles}: ${message}`);
+					this.onQueueError?.(item, message);
 				} finally {
 					this.current = null;
 					this.turnOriginClientId = null;

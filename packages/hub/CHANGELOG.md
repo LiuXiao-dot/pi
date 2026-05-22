@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Prompt queue failures are broadcast to connected clients as `error` events instead of failing silently in the server log only.
+- Image attachments with empty or invalid MIME types are normalized from base64 bytes before calling the model (JPEG/PNG/GIF/WebP only).
+
 ### Changed
 
 - Web UI sign-in no longer requires a room id; after login, a room list (create / delete / enter) is shown before joining chat.

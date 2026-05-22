@@ -2,6 +2,7 @@ import type { AgentSession, AgentSessionEvent, CreateAgentSessionResult } from "
 import type { WebSocket } from "ws";
 import type { ResolvedHubModelsConfig, ResolvedHubRolesConfig } from "./config.ts";
 import { ExtensionUiRouter } from "./extension-ui.ts";
+import { normalizeImageAttachments } from "./image-mime.ts";
 import { resolveMessageMentions } from "./mentions.ts";
 import { listHubModels } from "./model-info.ts";
 import {
@@ -103,6 +104,14 @@ export class Room {
 				},
 				onTurnEnd: () => {
 					this.queueAbortController = null;
+				},
+				onQueueError: (item, message) => {
+					const who = item.displayName ? `${item.displayName}: ` : "";
+					this.broadcast({
+						type: "error",
+						code: "queue_failed",
+						message: `${who}${message}`,
+					});
 				},
 			},
 		);
@@ -273,6 +282,17 @@ export class Room {
 				return;
 
 			case "prompt": {
+				const imageResult = normalizeImageAttachments(message.images);
+				if (imageResult.rejected.length > 0) {
+					this.sendCommandResult(
+						client,
+						"prompt",
+						message.id,
+						false,
+						`Unsupported image type(s): ${imageResult.rejected.join(", ")}. Use JPEG, PNG, GIF, or WebP.`,
+					);
+					return;
+				}
 				const mentions = resolveMessageMentions(message.message, {
 					roleNames: this.roomConfig.roleNames ?? [],
 					userNames: this.getPresenceDisplayNames(),
@@ -282,7 +302,7 @@ export class Room {
 					clientId: client.id,
 					displayName: client.displayName,
 					message: message.message,
-					images: message.images,
+					images: imageResult.images,
 					streamingBehavior: message.streamingBehavior,
 					mentionedRoles: mentions.roles,
 					mentionedUsers: mentions.users,
@@ -293,12 +313,23 @@ export class Room {
 			}
 
 			case "steer": {
+				const imageResult = normalizeImageAttachments(message.images);
+				if (imageResult.rejected.length > 0) {
+					this.sendCommandResult(
+						client,
+						"steer",
+						message.id,
+						false,
+						`Unsupported image type(s): ${imageResult.rejected.join(", ")}. Use JPEG, PNG, GIF, or WebP.`,
+					);
+					return;
+				}
 				const result = this.queue.enqueue({
 					command: "steer",
 					clientId: client.id,
 					displayName: client.displayName,
 					message: message.message,
-					images: message.images,
+					images: imageResult.images,
 					id: message.id,
 				});
 				this.sendCommandResult(client, "steer", message.id, result.accepted, result.error);
@@ -306,12 +337,23 @@ export class Room {
 			}
 
 			case "follow_up": {
+				const imageResult = normalizeImageAttachments(message.images);
+				if (imageResult.rejected.length > 0) {
+					this.sendCommandResult(
+						client,
+						"follow_up",
+						message.id,
+						false,
+						`Unsupported image type(s): ${imageResult.rejected.join(", ")}. Use JPEG, PNG, GIF, or WebP.`,
+					);
+					return;
+				}
 				const result = this.queue.enqueue({
 					command: "follow_up",
 					clientId: client.id,
 					displayName: client.displayName,
 					message: message.message,
-					images: message.images,
+					images: imageResult.images,
 					id: message.id,
 				});
 				this.sendCommandResult(client, "follow_up", message.id, result.accepted, result.error);

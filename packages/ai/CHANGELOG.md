@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Normalize user and tool-result image blocks with missing or invalid MIME types from base64 bytes before API conversion, so resumed sessions with legacy empty `mimeType` values no longer fail provider validation.
 - Fixed DeepSeek V4 model metadata to text-only input so hub and agent sessions downgrade stored images instead of sending unsupported `image_url` blocks to the API.
 - Fixed OpenAI-compatible `streamSimple()` requests to stop sending model-derived default output token caps, avoiding context-window reservation failures on servers such as vLLM while preserving explicit `maxTokens` and required Anthropic `max_tokens` handling ([#4675](https://github.com/earendil-works/pi/issues/4675)).
 - Fixed OpenAI prompt cache keys to clamp session-derived values to the 64-character API limit across OpenAI Responses, Chat Completions, Codex Responses, and Azure OpenAI Responses ([#4720](https://github.com/earendil-works/pi/issues/4720)).
