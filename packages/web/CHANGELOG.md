@@ -4,7 +4,10 @@
 
 ### Added
 
-- Marvis-inspired light theme overlay (`theme-marvis.css`) with single accent color, capsule controls, soft shadows, and modal scale-in animation. Active by default via `body.theme-marvis`; falls back cleanly when removed.
+- Marvis-inspired light theme is now the default palette in `style.css`: near-white surface (`#FAFAFA`), near-black text, single Marvis red-orange accent, capsule controls, and soft shadows. The previous dark palette is preserved under `body.theme-dark`.
+- Hero landing state shown when a room has no messages: centered brand mark, title, sub-line, and a 6-card suggested-task grid that fills the composer with a starter prompt on click. Hover lifts cards 2px and fades in a right-arrow.
+- Account row pinned to the bottom of the sidebar (avatar + name + Sign out); user/sign-out removed from the top header.
+- Empty or dot-only assistant replies now render an explicit warning bubble (“助手未返回正文内容”) instead of a silent empty bubble, so users get feedback when a model only emits an ellipsis.
 - Office (“Marvis 办公室”) modal showing the room's role roster on an isometric SVG workstation grid plus a stats side panel (active / available / rooms). Opened from a new `Office` button in the workspace header.
 - Redesign audit at `packages/web/docs/marvis-redesign.md` documenting gaps versus the Marvis reference and what shipped.
 
@@ -15,6 +18,8 @@
 
 ### Fixed
 
+- Empty or failed assistant replies no longer show only an ellipsis; the UI surfaces stop/error details and a banner when the model returns no text.
+- Image attachments with missing or invalid MIME types are sniffed from file bytes (fixes API 400 on pasted screenshots); provider errors are shown in readable form.
 - Hub restart no longer leaves a stale `joined` state on a closed WebSocket; room config and re-join work after reconnect.
 - Auto-login and refresh wait for WebSocket `open` before listing rooms.
 - Hub web client now renders user and assistant messages live from `agent_event` updates instead of only after a page refresh.

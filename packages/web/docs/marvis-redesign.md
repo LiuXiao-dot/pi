@@ -78,32 +78,46 @@ Navigation chrome (all screens):
 
 ## Shipped in this iteration
 
-This is a layered overlay, not a full rewrite. Existing dark theme stays
-as a fallback (`body.theme-dark`) and existing DOM is largely untouched.
-
-1. **`packages/web/src/theme-marvis.css`** — light Marvis palette,
-   capsule-radius controls, soft shadows, animation tokens. Loaded
-   alongside `style.css` and active when `<body>` has the
-   `theme-marvis` class (default).
-2. **`packages/web/src/office-view.ts`** — new module exposing
-   `showOfficeModal(client, roomId)`. Renders an SVG isometric office
-   with one workstation per role on the room's active roster, plus
-   greyed-out placeholder workstations. Right panel surfaces what the
-   hub already knows: room id, active roles, total roles available,
-   conversation message count. (Actual token accounting is not plumbed
-   through the hub yet; placeholders read "—" with a tooltip.)
-3. **Header button** — `Office` button in `renderWorkspace` opens the
-   modal. Placed next to `Roles`.
-4. **Reduced-motion support** — animations gated behind
-   `@media (prefers-reduced-motion: no-preference)`.
+1. **`packages/web/src/style.css`** — the `:root` token block now defines the
+   Marvis light palette by default (background `#FAFAFA`, near-black text,
+   single Marvis red-orange accent, capsule radii, soft shadows). The
+   previous dark palette is preserved under `body.theme-dark`. The dedicated
+   `theme-marvis.css` overlay was folded back into `style.css` because the
+   build pipeline only ships `style.css` to `packages/hub/dist/public`.
+2. **Workspace shell**:
+   - Header keeps brand + Roles + Office only.
+   - User name and Sign-out moved into a sticky **account row at the
+     bottom of the sidebar** (`.room-rail-account`).
+3. **Hero state** — when a room has no messages, the messages container
+   shows a centered Marvis-style hero: brand mark with accent underline,
+   title, sub-line, and 6 suggested-task cards in a responsive grid.
+   Cards fill the composer with a starter prompt on click; hover lifts
+   the card 2px and fades in a right-arrow. Toggled automatically via
+   `MutationObserver` on the messages container.
+4. **Empty / dot-only assistant reply** — if the assistant returns only
+   whitespace, dots, or an ellipsis, the bubble is marked `.msg-empty`
+   and shows an inline warning telling the user the model returned no
+   content (instead of an invisible empty bubble).
+5. **Office (“Marvis 办公室”) modal** — isometric SVG workstation grid
+   for the room's role roster, side panel with active / available / room
+   counts. Token usage tiles surface as `—` until per-room accounting is
+   plumbed through the hub.
+6. **Motion** — modals scale-fade in, hero cards lift, all gated under
+   `prefers-reduced-motion: no-preference`.
+7. **Build** — `npm run build` in `packages/web` and `packages/hub`
+   refreshes `packages/hub/dist/public/style.css` so the hub serves the
+   new theme on next reload.
 
 ## Deferred (tracked, not in this iteration)
 
-- True three-pane redesign of `renderWorkspace` (knowledge sources, search,
-  account row at the bottom). Would require deep changes to ~2.7k LoC of
-  `main.ts` and is best done as a dedicated PR.
-- Hero / suggested-task home page — needs product input on which tasks
-  the hub should suggest by default.
+- True three-pane redesign of `renderWorkspace` with collapsible local
+  knowledge groups (应用 / 文档 / 图库 / 此电脑). Would require deep changes
+  inside ~2.7k LoC of `main.ts` plus product input on what each group
+  should index.
+- A dedicated `自动任务` page — the hub does not yet expose scheduled or
+  background tasks.
+- A standalone `技能广场` browser — today skills are picked per-role inside
+  the role library modal.
 - Per-role token / usage accounting end-to-end (server side missing).
 - High-fidelity mascot illustrations — currently programmatic SVG.
 - Onboarding loader artwork.

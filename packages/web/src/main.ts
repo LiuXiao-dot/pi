@@ -1,5 +1,6 @@
 import { type MentionTarget, setupMentionComposer } from "./composer-mentions.ts";
 import { defaultWsUrl, HubClient } from "./hub-client.ts";
+import { resolveImageMimeType } from "./image-mime.ts";
 import { showOfficeModal } from "./office-view.ts";
 import type {
 	HubActivityUpdateMessage,
@@ -119,6 +120,31 @@ function transitionView(root: HTMLElement, render: () => void): void {
 	}, 200);
 }
 
+function simplifyProviderError(raw: string): string {
+	const mediaType = raw.match(/media_type:[^"'\\]+/);
+	if (mediaType) {
+		return mediaType[0].replace(/\\"/g, '"');
+	}
+
+	let current = raw;
+	for (let depth = 0; depth < 5; depth++) {
+		try {
+			const parsed = JSON.parse(current) as { message?: string; error?: { message?: string } };
+			const next = parsed.error?.message ?? parsed.message;
+			if (typeof next === "string" && next !== current) {
+				current = next;
+			}
+		} catch {
+			break;
+		}
+	}
+
+	if (current.length > 600) {
+		return `${current.slice(0, 600)}…`;
+	}
+	return current;
+}
+
 function getMessageText(message: unknown): string {
 	if (!message || typeof message !== "object") return "";
 	const m = message as {
@@ -134,6 +160,52 @@ function getMessageText(message: unknown): string {
 			.join("\n");
 	}
 	return "";
+}
+
+type AssistantMessageMeta = {
+	text: string;
+	stopReason?: string;
+	errorMessage?: string;
+};
+
+function getAssistantMessageMeta(message: unknown): AssistantMessageMeta {
+	const text = getMessageText(message);
+	if (!message || typeof message !== "object") {
+		return { text };
+	}
+	const m = message as { stopReason?: string; errorMessage?: string };
+	return { text, stopReason: m.stopReason, errorMessage: m.errorMessage };
+}
+
+type AssistantDisplay = {
+	displayText: string;
+	isFailed: boolean;
+	bannerMessage?: string;
+};
+
+function formatAssistantDisplay(meta: AssistantMessageMeta): AssistantDisplay {
+	const text = meta.text.trim();
+	if (text) {
+		return { displayText: meta.text, isFailed: false };
+	}
+	const errMsg = meta.errorMessage?.trim();
+	const stop = meta.stopReason;
+	if (stop === "error" || stop === "aborted") {
+		const label = stop === "aborted" ? "Aborted" : "Error";
+		const detail = errMsg ? simplifyProviderError(errMsg) : "The request ended without a response.";
+		const displayText = `${label}: ${detail}`;
+		return { displayText, isFailed: true, bannerMessage: displayText };
+	}
+	if (errMsg) {
+		const detail = simplifyProviderError(errMsg);
+		return { displayText: detail, isFailed: true, bannerMessage: detail };
+	}
+	const displayText = "(No response from model)";
+	return {
+		displayText,
+		isFailed: true,
+		bannerMessage: "The model returned an empty response.",
+	};
 }
 
 function messageRoleClass(msg: { role?: string; customType?: string }): string {
@@ -269,7 +341,6 @@ function renderWorkspace(
 	rolesBtn.type = "button";
 	rolesBtn.textContent = "Roles";
 	rolesBtn.onclick = () => showRoleLibraryModal();
-	topHeader.appendChild(rolesBtn);
 
 	const officeBtn = el("button", "secondary-btn");
 	officeBtn.type = "button";
@@ -279,15 +350,10 @@ function renderWorkspace(
 		if (!selectedRoomId) return;
 		void showOfficeModal(client, selectedRoomId);
 	};
-	topHeader.appendChild(officeBtn);
 
-	const user = el("span", "workspace-user");
-	user.textContent = session.displayName;
-	const signOutBtn = el("button", "secondary-btn");
-	signOutBtn.type = "button";
-	signOutBtn.textContent = "Sign out";
-	signOutBtn.onclick = () => onSignOut();
-	topHeader.append(brand, rolesBtn, officeBtn, user, signOutBtn);
+	// Header keeps brand + Roles + Office only. Sign-out moves into the
+	// sidebar account row at the bottom (Marvis layout).
+	topHeader.append(brand, rolesBtn, officeBtn);
 	shell.appendChild(topHeader);
 
 	const body = el("div", "workspace-layout");
@@ -312,6 +378,19 @@ function renderWorkspace(
 	const railErr = el("div", "error-banner hidden");
 	const roomList = el("ul", "room-list");
 	roomRail.append(railHeader, roomToolbar, railErr, roomList);
+
+	// Account row pinned to the bottom of the sidebar (Marvis layout)
+	const accountRow = el("div", "room-rail-account");
+	const accountAvatar = el("span", "room-rail-account-avatar");
+	accountAvatar.textContent = (session.displayName || "?").slice(0, 1).toUpperCase();
+	const accountName = el("span", "room-rail-account-name");
+	accountName.textContent = session.displayName;
+	const accountSignOut = el("button", "room-rail-account-signout");
+	accountSignOut.type = "button";
+	accountSignOut.textContent = "Sign out";
+	accountSignOut.onclick = () => onSignOut();
+	accountRow.append(accountAvatar, accountName, accountSignOut);
+	roomRail.appendChild(accountRow);
 
 	// Reset all open swipes when clicking/tapping the rail background
 	roomRail.addEventListener("click", (ev) => {
@@ -740,6 +819,76 @@ function renderWorkspace(
 	const messages = el("div", "messages");
 	panel.appendChild(messages);
 
+	// Hero panel shown when the conversation is empty (Marvis-style landing).
+	const heroEl = el("div", "chat-hero");
+	heroEl.innerHTML = "";
+	const heroMark = el("div", "chat-hero-mark");
+	heroMark.textContent = "π";
+	const heroTitle = el("h2", "chat-hero-title");
+	heroTitle.textContent = "pi Hub";
+	const heroSub = el("p", "chat-hero-sub");
+	heroSub.textContent = "交给我来帮你完成 — 输入任务，或从下方选个提示开始。";
+	heroEl.append(heroMark, heroTitle, heroSub);
+
+	const heroCards = el("div", "chat-hero-cards");
+	const HERO_PROMPTS: Array<{ title: string; body: string; prompt: string }> = [
+		{
+			title: "介绍这个房间",
+			body: "总结当前 room 的角色、技能和最近进展。",
+			prompt: "总结当前房间的角色、技能和最近进展。",
+		},
+		{
+			title: "创建任务计划",
+			body: "@pm 拆解一个需求，生成可执行的 JSON 计划。",
+			prompt: "@pm 请帮我拆解下面这个需求：",
+		},
+		{
+			title: "审查最近变更",
+			body: "@reviewer 读最近的代码变更，输出问题清单。",
+			prompt: "@reviewer 请读最近的代码变更，输出问题清单。",
+		},
+		{
+			title: "修复 Bug",
+			body: "@developer 描述软件问题，让它定位并修复。",
+			prompt: "@developer 现象：\n预期：\n复现步骤：",
+		},
+		{ title: "查看办公室", body: "打开顶部“Office”看看本房间现在有哪些角色在岗。", prompt: "" },
+		{ title: "添加新角色", body: "打开顶部“Roles”创建或编辑一个角色。", prompt: "" },
+	];
+	for (const item of HERO_PROMPTS) {
+		const card = el("button", "chat-hero-card") as HTMLButtonElement;
+		card.type = "button";
+		const t = el("p", "chat-hero-card-title");
+		t.textContent = item.title;
+		const b = el("p", "chat-hero-card-body");
+		b.textContent = item.body;
+		const arrow = el("span", "chat-hero-card-arrow");
+		arrow.textContent = "→";
+		card.append(t, b, arrow);
+		card.onclick = () => {
+			if (!item.prompt) return;
+			const input = panel.querySelector(
+				".composer textarea, .composer input, textarea.composer-input, .composer-input",
+			) as HTMLTextAreaElement | HTMLInputElement | null;
+			if (input) {
+				input.value = item.prompt;
+				input.focus();
+			}
+		};
+		heroCards.appendChild(card);
+	}
+	heroEl.appendChild(heroCards);
+	messages.appendChild(heroEl);
+
+	function updateHeroVisibility(): void {
+		const hasRealMessage = !!messages.querySelector(".msg");
+		heroEl.style.display = hasRealMessage ? "none" : "";
+	}
+	updateHeroVisibility();
+
+	// Observe message additions/removals to toggle the hero panel automatically.
+	new MutationObserver(() => updateHeroVisibility()).observe(messages, { childList: true });
+
 	const roleGapBar = el("div", "role-gap-bar hidden");
 	panel.appendChild(roleGapBar);
 
@@ -857,10 +1006,15 @@ function renderWorkspace(
 					// data:image/png;base64,...
 					const comma = result.indexOf(",");
 					const data = comma >= 0 ? result.slice(comma + 1) : result;
+					const mimeType = resolveImageMimeType(file.type, data);
+					if (!mimeType) {
+						showError(`Unsupported image "${file.name}". Use JPEG, PNG, GIF, or WebP.`);
+						return;
+					}
 					attachedFiles.push({
 						name: file.name,
 						data,
-						mimeType: file.type,
+						mimeType,
 						isImage: true,
 					});
 					renderChips();
@@ -905,10 +1059,15 @@ function renderWorkspace(
 					const result = reader.result as string;
 					const comma = result.indexOf(",");
 					const data = comma >= 0 ? result.slice(comma + 1) : result;
+					const mimeType = resolveImageMimeType(item.type, data);
+					if (!mimeType) {
+						showError("Unsupported pasted image. Use JPEG, PNG, GIF, or WebP.");
+						return;
+					}
 					attachedFiles.push({
 						name,
 						data,
-						mimeType: item.type,
+						mimeType,
 						isImage: true,
 					});
 					renderChips();
@@ -1935,8 +2094,9 @@ function renderWorkspace(
 		isStreaming: boolean,
 		meta?: string,
 		animate = true,
+		isFailed = false,
 	): HTMLElement {
-		const div = el("div", `msg assistant${animate ? " msg-animate-in" : ""}`);
+		const div = el("div", `msg assistant${isFailed ? " msg-failed" : ""}${animate ? " msg-animate-in" : ""}`);
 		const header = el("div", "msg-collapse-header");
 		const toggle = el("span", "msg-collapse-toggle");
 		toggle.textContent = "\u25b6";
@@ -1952,7 +2112,7 @@ function renderWorkspace(
 			header.appendChild(metaDiv);
 		}
 		const body = el("div", "msg-collapse-body hidden");
-		body.textContent = text || "\u22ef";
+		body.textContent = text;
 		const conclusion = el("div", "msg-collapse-conclusion");
 		let expanded = false;
 		header.addEventListener("click", () => {
@@ -1977,6 +2137,23 @@ function renderWorkspace(
 		if (!body || !conclusion) return;
 
 		const fullText = body.textContent ?? "";
+		const trimmed = fullText.trim();
+		// Empty or dot-only reply (e.g. just "..." or "…"): show an explicit notice
+		// so the user understands the model returned no usable content.
+		if (!trimmed || /^[.\u2026\s]+$/.test(trimmed)) {
+			if (header) header.style.display = "none";
+			body.classList.add("hidden");
+			el.classList.add("msg-empty");
+			conclusion.innerHTML = "";
+			const icon = document.createElement("span");
+			icon.className = "msg-empty-icon";
+			icon.textContent = "⚠";
+			const note = document.createElement("span");
+			note.textContent = "助手未返回正文内容（模型仅输出了省略号 / 空响应）。如需重试，可重发上一条消息或切换模型。";
+			conclusion.append(icon, note);
+			return;
+		}
+
 		const lastBreak = fullText.lastIndexOf("\n\n");
 
 		if (lastBreak <= 0) {
@@ -1984,13 +2161,16 @@ function renderWorkspace(
 			if (header) header.style.display = "none";
 			body.classList.add("hidden");
 			conclusion.textContent = fullText;
+			if (el.classList.contains("msg-failed")) {
+				conclusion.classList.add("msg-failed-text");
+			}
 			return;
 		}
 
 		const beforeConclusion = fullText.slice(0, lastBreak);
 		const conclusionText = fullText.slice(lastBreak + 2);
 
-		body.textContent = beforeConclusion || "\u22ef";
+		body.textContent = beforeConclusion;
 		conclusion.textContent = conclusionText;
 		if (label) {
 			label.textContent = "Response";
@@ -2009,7 +2189,8 @@ function renderWorkspace(
 			if (m.role === "user") {
 				appendMessage("user", getMessageText(msg), undefined, false);
 			} else if (m.role === "assistant") {
-				appendCollapsibleAssistantMsg(getMessageText(msg), false, undefined, false);
+				const assistant = formatAssistantDisplay(getAssistantMessageMeta(msg));
+				appendCollapsibleAssistantMsg(assistant.displayText, false, undefined, false, assistant.isFailed);
 			} else if (m.role === "custom") {
 				const div = el("div", `msg ${messageRoleClass(m)}`);
 				const meta = el("div", "meta");
@@ -2037,11 +2218,12 @@ function renderWorkspace(
 		if (!streamingAssistantEl) {
 			return;
 		}
+		const assistant = formatAssistantDisplay(getAssistantMessageMeta(message));
 		const body = streamingAssistantEl.querySelector(".msg-collapse-body") as HTMLElement | null;
 		if (body) {
-			const text = getMessageText(message);
-			body.textContent = text || "⋯";
+			body.textContent = assistant.displayText;
 		}
+		streamingAssistantEl.classList.toggle("msg-failed", assistant.isFailed);
 		if (host) {
 			const meta = streamingAssistantEl.querySelector(".meta");
 			const label = assistantMetaLabel(host);
@@ -2201,12 +2383,14 @@ function renderWorkspace(
 		if (event.type === "message_update" && event.message) {
 			const m = event.message as { role?: string };
 			if (m.role === "assistant") {
-				const text = getMessageText(event.message);
-				if (!streamingAssistantEl && text) {
+				const assistant = formatAssistantDisplay(getAssistantMessageMeta(event.message));
+				if (!streamingAssistantEl && assistant.displayText.trim()) {
 					streamingAssistantEl = appendCollapsibleAssistantMsg(
-						text,
+						assistant.displayText,
 						true,
 						assistantMetaLabel(streamingAssistantHost),
+						true,
+						assistant.isFailed,
 					);
 				} else if (streamingAssistantEl) {
 					updateStreamingAssistant(event.message, hostDisplayName);
@@ -2216,15 +2400,20 @@ function renderWorkspace(
 		if (event.type === "message_end" && event.message) {
 			const m = event.message as { role?: string };
 			if (m.role === "assistant") {
-				const text = getMessageText(event.message);
-				if (!streamingAssistantEl && text) {
+				const assistant = formatAssistantDisplay(getAssistantMessageMeta(event.message));
+				if (!streamingAssistantEl) {
 					streamingAssistantEl = appendCollapsibleAssistantMsg(
-						text,
+						assistant.displayText,
 						false,
 						assistantMetaLabel(streamingAssistantHost),
+						true,
+						assistant.isFailed,
 					);
-				} else if (streamingAssistantEl) {
+				} else {
 					updateStreamingAssistant(event.message, hostDisplayName);
+				}
+				if (assistant.bannerMessage) {
+					showError(assistant.bannerMessage);
 				}
 				if (streamingAssistantEl) {
 					finalizeCollapsibleAssistantMsg(streamingAssistantEl);
