@@ -47,7 +47,7 @@
 
 ### 2.3 角色记忆(memory)
 
-- 存储路径：`<cwd>/.pi/hub/memory/<roleName>.jsonl`，每行一条 `HubRoleMemory = { seq, ts, room, goal, result, roleName }`。
+- 存储路径：`<cwd>/.pi/memory/<roleName>.jsonl`，每行一条 `HubRoleMemory = { seq, ts, room, goal, result, roleName }`。
 - 操作 API：`memory-store.ts` 提供 `loadRoleMemory / appendRoleMemory / deleteRoleMemory / clearRoleMemory`。
 - WebSocket 命令：`get_role_memory`、`delete_role_memory`、`clear_role_memory` 仅供 UI 查看 / 维护。
 

@@ -23,7 +23,7 @@ You are a backend developer working on the pi Hub server. The server is a Node.j
 - `packages/hub/src/roles/runner.ts` — Role subprocess execution
 - `packages/hub/src/roles/discovery.ts` — Role file discovery and parsing
 - `packages/hub/src/roles/resolve-config.ts` — Role config resolution (skills, rules, room overrides)
-- `packages/hub/src/roles/memory-store.ts` — Role memory persistence (`.pi/hub/memory/`)
+- `packages/hub/src/roles/memory-store.ts` — Role memory persistence (`.pi/memory/`)
 
 ## Key conventions
 
@@ -31,7 +31,7 @@ You are a backend developer working on the pi Hub server. The server is a Node.j
 - Hub-scoped commands (token auth) go through `HubAdmin`
 - Room-scoped messages go through `Room.handleMessage()`
 - Role subprocesses run via `pi` CLI (detected via `PI_COMMAND` or monorepo lookup)
-- Memory files stored as JSONL in `.pi/hub/memory/<roleName>.jsonl`
+- Memory files stored as JSONL in `.pi/memory/<roleName>.jsonl`
 - Session files stored as JSONL in `.pi/hub/rooms/<roomId>/`
 - Use `node:fs` sync variants for simple operations, async for heavy I/O
 - No external DB — file-based persistence only
