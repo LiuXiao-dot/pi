@@ -221,6 +221,65 @@ function messageRoleClass(msg: { role?: string; customType?: string }): string {
 const USER_AVATAR = "U";
 const ASSISTANT_AVATAR = "π";
 
+type ReplyKind = "session" | "role";
+type ReplyPhase = "running" | "done" | "failed";
+
+interface ReplyEntry {
+	id: string;
+	roomId: string;
+	kind: ReplyKind;
+	label: string;
+	roleName?: string;
+	phase: ReplyPhase;
+	detail?: string;
+	summary: string;
+	messages: unknown[];
+	events: unknown[];
+	startedAt: number;
+	endedAt?: number;
+}
+
+function truncateSummary(text: string, max = 80): string {
+	const t = text.trim();
+	if (t.length <= max) return t;
+	return `${t.slice(0, max)}…`;
+}
+
+function sessionReplyId(roomId: string, turnId: string): string {
+	return `session:${roomId}:${turnId}`;
+}
+
+function roleReplyId(taskId: string): string {
+	return `role:${taskId}`;
+}
+
+function activityPhaseToDetail(phase: string, detail?: string): string | undefined {
+	switch (phase) {
+		case "thinking":
+			return "思考中";
+		case "tool":
+			return detail ? `调用工具 ${detail}` : "调用工具";
+		case "compacting":
+			return "整理输出";
+		case "replying":
+			return undefined;
+		default:
+			return undefined;
+	}
+}
+
+function formatStatusLine(entry: ReplyEntry, myDisplayName: string): string {
+	const base = `to ${myDisplayName} · ${entry.label}`;
+	if (entry.phase === "running") {
+		if (entry.detail) return `${base} · ${entry.detail}`;
+		return `${base} · 进行中…`;
+	}
+	if (entry.phase === "done") {
+		return entry.summary ? `${base} · 已完成 — ${entry.summary}` : `${base} · 已完成`;
+	}
+	return entry.summary ? `${base} · 失败 — ${entry.summary}` : `${base} · 失败`;
+}
+
 function renderLogin(root: HTMLElement): void {
 	hideLoadingScreen();
 	const stored = loadStored();
@@ -447,6 +506,7 @@ function renderWorkspace(
 			return;
 		}
 		for (const r of rooms) {
+			roomTitleById.set(r.roomId, r.title?.trim() ? r.title : r.roomId);
 			const li = el("li");
 
 			// Swipe container: wraps row + hidden delete action
@@ -480,6 +540,8 @@ function renderWorkspace(
 							selectedRoomId = null;
 						}
 						await client.deleteRoom(roomId, true);
+						purgeRoomReplies(roomId);
+						roomTitleById.delete(roomId);
 						await refreshRoomList();
 					} catch (e) {
 						showRailError(e instanceof Error ? e.message : String(e));
@@ -587,47 +649,9 @@ function renderWorkspace(
 			swipeWrap.appendChild(row);
 			li.append(deleteAction, swipeWrap);
 
-			// Reply rows: session model + role replies under this room
-			const replyContainer = el("div", "room-replies");
-			const rids = roomReplies.get(roomId) ?? [];
-			for (const rid of rids) {
-				const reply = replyStore.get(rid);
-				if (!reply) continue;
-				const replyRow = el("button", "room-reply-row");
-				replyRow.type = "button";
-				replyRow.setAttribute("data-reply-id", rid);
-				if (rid === activeReplyId) replyRow.classList.add("active");
-				const dot = el("span", "room-reply-dot");
-				const label = el("span", "room-reply-label");
-				label.textContent = reply.label;
-				const preview = el("span", "room-reply-preview");
-				preview.textContent = reply.preview;
-				replyRow.append(dot, label, preview);
-				replyRow.onclick = (ev) => {
-					ev.stopPropagation();
-					activeReplyId = rid;
-					// If not joined to this room, join first
-					if (selectedRoomId !== roomId) {
-						void selectRoom(roomId).then(() => {
-							renderHistory(reply.messages);
-							updateRoomReplyRows();
-						});
-					} else {
-						renderHistory(reply.messages);
-						updateRoomReplyRows();
-					}
-				};
-				replyContainer.appendChild(replyRow);
-			}
-			li.appendChild(replyContainer);
+			li.appendChild(buildRoomRepliesEl(roomId));
 
 			roomList.appendChild(li);
-
-			// Render role sub-rows for the active room
-			if (roomId === selectedRoomId) {
-				activeRoomLi = li;
-				renderRoleSubRows(li);
-			}
 		}
 	}
 
@@ -699,7 +723,13 @@ function renderWorkspace(
 		if (!confirm("Clear all messages in this room?")) return;
 		void (async () => {
 			try {
-				await client.clearRoomSession(selectedRoomId!);
+				const rid = selectedRoomId!;
+				await client.clearRoomSession(rid);
+				purgeRoomReplies(rid);
+				activeReplyId = null;
+				currentTurnId = null;
+				refreshMessagesPanel();
+				updateRoomReplyRows();
 			} catch (e) {
 				showError(e instanceof Error ? e.message : String(e));
 			}
@@ -881,7 +911,7 @@ function renderWorkspace(
 	messages.appendChild(heroEl);
 
 	function updateHeroVisibility(): void {
-		const hasRealMessage = !!messages.querySelector(".msg");
+		const hasRealMessage = !!messages.querySelector(".msg, .room-status-row, .reply-detail-back-bar");
 		heroEl.style.display = hasRealMessage ? "none" : "";
 	}
 	updateHeroVisibility();
@@ -1696,195 +1726,302 @@ function renderWorkspace(
 	let presenceCount = 0;
 	let presenceMembers: Array<{ displayName: string }> = [];
 	let roomAssignedRoles: string[] = [];
-	let activeRoles: Array<{ roleName: string; taskId: string; phase: string; preview?: string; fullOutput?: string }> =
-		[];
-	let activeRoomLi: HTMLElement | null = null;
-
-	// Reply entries map: id → { roomId, label, messages, preview }
-	const replyStore = new Map<
-		string,
-		{ roomId: string; label: string; preview: string; messages: unknown[]; roleName?: string }
-	>();
-	// Room → ordered reply IDs
+	const replyStore = new Map<string, ReplyEntry>();
 	const roomReplies = new Map<string, string[]>();
+	const roomUserMessages = new Map<string, Array<{ text: string; meta: string }>>();
+	const roomTitleById = new Map<string, string>();
 	let activeReplyId: string | null = null;
+	let currentTurnId: string | null = null;
 
-	function renderRoleSubRows(li: HTMLElement): void {
-		const existing = li.querySelector(".room-role-sub-rows");
-		if (existing) existing.remove();
+	function getRoomDisplayLabel(roomId: string): string {
+		return roomTitleById.get(roomId) ?? roomId;
+	}
 
-		interface ReplyRowItem {
-			label: string;
-			phase: string;
-			onClick: () => void;
-			canCancel: boolean; // show cancel on swipe for running replies
+	function appendReplyId(roomId: string, replyId: string): void {
+		const list = roomReplies.get(roomId) ?? [];
+		if (!list.includes(replyId)) {
+			list.push(replyId);
+			roomReplies.set(roomId, list);
 		}
-		const rows: ReplyRowItem[] = [];
+	}
 
-		// Session model reply row
-		if (roomBusy && selectedRoomId) {
-			rows.push({
-				label: `[session] ${statusModelSuffix}`,
-				phase: "replying",
-				onClick: () => {
-					if (sessionReplyId && replyStore.has(sessionReplyId)) {
-						const reply = replyStore.get(sessionReplyId)!;
-						renderHistory(reply.messages);
-					}
-				},
-				canCancel: true,
-			});
+	function purgeRoomReplies(roomId: string): void {
+		const ids = roomReplies.get(roomId) ?? [];
+		for (const id of ids) {
+			replyStore.delete(id);
 		}
-
-		// Role sub-rows
-		for (const role of activeRoles) {
-			rows.push({
-				label: `[${role.roleName}] ${statusModelSuffix}`,
-				phase: role.phase === "started" ? "running" : role.phase,
-				onClick: () => {
-					const preview = role.fullOutput ?? role.preview ?? "";
-					if (preview) {
-						messages.innerHTML = "";
-						const div = el("div", "msg role");
-						const meta = el("div", "meta");
-						meta.textContent = `[${role.roleName}] ${role.phase === "done" ? "completed" : role.phase === "failed" ? "failed" : "running"}`;
-						div.appendChild(meta);
-						const body = el("div", "msg-body");
-						body.textContent = preview;
-						div.appendChild(body);
-						messages.appendChild(div);
-						scrollMessagesToBottom(true);
-					}
-				},
-				canCancel: true,
-			});
+		roomReplies.delete(roomId);
+		roomUserMessages.delete(roomId);
+		const active = activeReplyId ? replyStore.get(activeReplyId) : undefined;
+		if (active?.roomId === roomId) {
+			activeReplyId = null;
 		}
+	}
 
-		if (rows.length === 0) return;
-
-		const container = el("div", "room-role-sub-rows");
-		for (const r of rows) {
-			const wrap = el("div", "reply-swipe-wrap");
-
-			const subRow = el("button", "room-role-sub-row");
-			subRow.type = "button";
-
-			const statusDot = el("span", `role-sub-dot ${r.phase}`);
-			const labelSpan = el("span", "role-sub-name");
-			labelSpan.textContent = r.label;
-
-			subRow.append(statusDot, labelSpan);
-			subRow.onclick = (e) => {
-				e.stopPropagation();
-				r.onClick();
-			};
-			wrap.appendChild(subRow);
-
-			// Cancel button (behind the row, revealed on swipe left)
-			if (r.canCancel) {
-				const cancelBtn = el("button", "reply-swipe-cancel");
-				cancelBtn.type = "button";
-				cancelBtn.textContent = "Cancel";
-				cancelBtn.style.position = "absolute";
-				cancelBtn.style.right = "0";
-				cancelBtn.style.top = "0";
-				cancelBtn.style.bottom = "0";
-				cancelBtn.style.width = "64px";
-				cancelBtn.style.display = "flex";
-				cancelBtn.style.alignItems = "center";
-				cancelBtn.style.justifyContent = "center";
-				cancelBtn.style.background = "var(--error)";
-				cancelBtn.style.color = "#fff";
-				cancelBtn.style.border = "none";
-				cancelBtn.style.borderRadius = "0 var(--radius-sm) var(--radius-sm) 0";
-				cancelBtn.style.fontSize = "0.65rem";
-				cancelBtn.style.fontWeight = "500";
-				cancelBtn.style.cursor = "pointer";
-				cancelBtn.style.opacity = "0";
-				cancelBtn.style.pointerEvents = "none";
-				cancelBtn.style.transition = "opacity var(--duration-fast) ease";
-				cancelBtn.style.zIndex = "1";
-				cancelBtn.style.position = "absolute";
-				cancelBtn.style.right = "0";
-				cancelBtn.style.top = "0";
-				cancelBtn.style.bottom = "0";
-				cancelBtn.style.width = "64px";
-
-				cancelBtn.onclick = (e) => {
-					e.stopPropagation();
-					if (!client.isJoined()) return;
-					client.abort();
-					roomBusy = false;
-					updateSleepButton();
-					renderRoleSubRows(activeRoomLi!);
-				};
-
-				// Swipe logic on wrap
-				let sStartX = 0;
-				let sCurrentX = 0;
-				let sPointerId = -1;
-				let sDragging = false;
-				const S_THRESH = 64;
-
-				wrap.addEventListener("pointerdown", (ev) => {
-					sStartX = ev.clientX;
-					sCurrentX = sStartX;
-					sDragging = false;
-					sPointerId = ev.pointerId;
-				});
-				wrap.addEventListener("pointermove", (ev) => {
-					if (sPointerId < 0) return;
-					const dx = ev.clientX - sStartX;
-					if (!sDragging && Math.abs(dx) < 8) return;
-					if (!sDragging) {
-						sDragging = true;
-						wrap.setPointerCapture(sPointerId);
-					}
-					sCurrentX = ev.clientX;
-					if (dx <= 0) {
-						wrap.style.transform = `translateX(${Math.max(dx, -S_THRESH)}px)`;
-						cancelBtn.style.opacity = String(Math.min(1, Math.abs(dx) / S_THRESH));
-					} else {
-						wrap.style.transform = "translateX(0)";
-						cancelBtn.style.opacity = "0";
-					}
-				});
-				wrap.addEventListener("pointerup", (ev) => {
-					if (sPointerId < 0) return;
-					sPointerId = -1;
-					if (sDragging) {
-						const dx = sCurrentX - sStartX;
-						if (dx < -S_THRESH / 2) {
-							wrap.style.transform = `translateX(-${S_THRESH}px)`;
-							cancelBtn.style.opacity = "1";
-							cancelBtn.style.pointerEvents = "auto";
-						} else {
-							wrap.style.transform = "translateX(0)";
-							cancelBtn.style.opacity = "0";
-							cancelBtn.style.pointerEvents = "none";
-						}
-						try {
-							wrap.releasePointerCapture(ev.pointerId);
-						} catch {}
-					}
-					sStartX = 0;
-					sCurrentX = 0;
-				});
-				wrap.addEventListener("pointercancel", () => {
-					sPointerId = -1;
-					sDragging = false;
-				});
-
-				wrap.appendChild(cancelBtn);
+	function rolesBusyForRoom(roomId: string): boolean {
+		const ids = roomReplies.get(roomId) ?? [];
+		for (const id of ids) {
+			const entry = replyStore.get(id);
+			if (entry?.kind === "role" && entry.phase === "running") {
+				return true;
 			}
+		}
+		return false;
+	}
 
+	function syncRolesBusy(): void {
+		rolesBusy = selectedRoomId ? rolesBusyForRoom(selectedRoomId) : false;
+		updateSleepButton();
+	}
+
+	function currentSessionReply(): ReplyEntry | undefined {
+		if (!selectedRoomId || !currentTurnId) return undefined;
+		return replyStore.get(sessionReplyId(selectedRoomId, currentTurnId));
+	}
+
+	function selectReply(replyId: string): void {
+		const reply = replyStore.get(replyId);
+		if (!reply) return;
+		activeReplyId = replyId;
+		const showDetail = (): void => {
+			refreshMessagesPanel();
+			updateRoomReplyRows();
+		};
+		if (selectedRoomId !== reply.roomId) {
+			void selectRoom(reply.roomId).then(showDetail);
+		} else {
+			showDetail();
+		}
+	}
+
+	function renderReplyDetail(replyId: string): void {
+		const reply = replyStore.get(replyId);
+		if (!reply) return;
+		messages.style.overflow = "hidden";
+		messages.innerHTML = "";
+		streamingAssistantEl = null;
+		streamingAssistantHost = null;
+		lastMetaHost = null;
+		toolMsgMap = new Map();
+
+		const backBar = el("button", "reply-detail-back-bar");
+		backBar.type = "button";
+		backBar.textContent = "← 返回房间状态";
+		backBar.onclick = () => {
+			activeReplyId = null;
+			refreshMessagesPanel();
+			updateRoomReplyRows();
+		};
+		messages.appendChild(backBar);
+
+		for (const msg of reply.messages) {
+			const m = msg as { role?: string; customType?: string };
+			if (m.role === "user") {
+				appendMessage("user", getMessageText(msg), undefined, false);
+			} else if (m.role === "assistant") {
+				const assistant = formatAssistantDisplay(getAssistantMessageMeta(msg));
+				appendCollapsibleAssistantMsg(assistant.displayText, false, undefined, false, assistant.isFailed);
+			} else if (m.role === "custom") {
+				const div = el("div", `msg ${messageRoleClass(m)}`);
+				const meta = el("div", "meta");
+				meta.textContent = m.customType ?? "role";
+				div.appendChild(meta);
+				const body = el("div", "msg-body");
+				body.textContent = getMessageText(msg);
+				div.appendChild(body);
+				messages.appendChild(div);
+			}
+		}
+		messages.scrollTop = 0;
+		requestAnimationFrame(() => {
+			messages.style.overflow = "";
+		});
+	}
+
+	function updateStatusRowElement(entry: ReplyEntry): void {
+		const row = messages.querySelector(`[data-status-reply-id="${entry.id}"]`);
+		if (!row) return;
+		const textEl = row.querySelector(".room-status-text");
+		if (textEl) {
+			textEl.textContent = formatStatusLine(entry, session.displayName);
+		}
+		row.classList.remove("running", "done", "failed");
+		row.classList.add(entry.phase);
+	}
+
+	function renderRoomStatusBoard(): void {
+		if (!selectedRoomId) return;
+		messages.style.overflow = "hidden";
+		messages.innerHTML = "";
+		streamingAssistantEl = null;
+		streamingAssistantHost = null;
+		lastMetaHost = null;
+		toolMsgMap = new Map();
+
+		for (const um of roomUserMessages.get(selectedRoomId) ?? []) {
+			appendMessage("user", um.text, um.meta, false);
+		}
+
+		const rids = roomReplies.get(selectedRoomId) ?? [];
+		for (const rid of rids) {
+			const entry = replyStore.get(rid);
+			if (!entry) continue;
+			const row = el("button", `room-status-row ${entry.phase}`);
+			row.type = "button";
+			row.setAttribute("data-status-reply-id", entry.id);
+			const textEl = el("span", "room-status-text");
+			textEl.textContent = formatStatusLine(entry, session.displayName);
+			row.appendChild(textEl);
+			row.onclick = () => selectReply(entry.id);
+			messages.appendChild(row);
+		}
+
+		messages.scrollTop = messages.scrollHeight;
+		requestAnimationFrame(() => {
+			messages.style.overflow = "";
+		});
+	}
+
+	function refreshMessagesPanel(): void {
+		if (activeReplyId) {
+			renderReplyDetail(activeReplyId);
+		} else {
+			renderRoomStatusBoard();
+		}
+	}
+
+	function attachReplySwipeCancel(wrap: HTMLElement, entry: ReplyEntry): void {
+		const cancelBtn = el("button", "reply-swipe-cancel");
+		cancelBtn.type = "button";
+		cancelBtn.textContent = "Cancel";
+		cancelBtn.style.cssText =
+			"position:absolute;right:0;top:0;bottom:0;width:64px;display:flex;align-items:center;justify-content:center;background:var(--error);color:#fff;border:none;border-radius:0 var(--radius-sm) var(--radius-sm) 0;font-size:0.65rem;font-weight:500;cursor:pointer;opacity:0;pointer-events:none;transition:opacity var(--duration-fast) ease;z-index:1";
+
+		cancelBtn.onclick = (e) => {
+			e.stopPropagation();
+			if (!client.isJoined()) return;
+			if (entry.kind === "session") {
+				client.abort();
+				roomBusy = false;
+				updateSleepButton();
+			}
+			wrap.style.transform = "translateX(0)";
+			cancelBtn.style.opacity = "0";
+			cancelBtn.style.pointerEvents = "none";
+		};
+
+		let sStartX = 0;
+		let sCurrentX = 0;
+		let sPointerId = -1;
+		let sDragging = false;
+		const S_THRESH = 64;
+
+		wrap.addEventListener("pointerdown", (ev) => {
+			sStartX = ev.clientX;
+			sCurrentX = sStartX;
+			sDragging = false;
+			sPointerId = ev.pointerId;
+		});
+		wrap.addEventListener("pointermove", (ev) => {
+			if (sPointerId < 0) return;
+			const dx = ev.clientX - sStartX;
+			if (!sDragging && Math.abs(dx) < 8) return;
+			if (!sDragging) {
+				sDragging = true;
+				wrap.setPointerCapture(sPointerId);
+			}
+			sCurrentX = ev.clientX;
+			if (dx <= 0) {
+				wrap.style.transform = `translateX(${Math.max(dx, -S_THRESH)}px)`;
+				cancelBtn.style.opacity = String(Math.min(1, Math.abs(dx) / S_THRESH));
+			} else {
+				wrap.style.transform = "translateX(0)";
+				cancelBtn.style.opacity = "0";
+			}
+		});
+		wrap.addEventListener("pointerup", (ev) => {
+			if (sPointerId < 0) return;
+			sPointerId = -1;
+			if (sDragging) {
+				const dx = sCurrentX - sStartX;
+				if (dx < -S_THRESH / 2) {
+					wrap.style.transform = `translateX(-${S_THRESH}px)`;
+					cancelBtn.style.opacity = "1";
+					cancelBtn.style.pointerEvents = "auto";
+				} else {
+					wrap.style.transform = "translateX(0)";
+					cancelBtn.style.opacity = "0";
+					cancelBtn.style.pointerEvents = "none";
+				}
+				try {
+					wrap.releasePointerCapture(ev.pointerId);
+				} catch {
+					/* ignore */
+				}
+			}
+			sStartX = 0;
+			sCurrentX = 0;
+		});
+		wrap.addEventListener("pointercancel", () => {
+			sPointerId = -1;
+			sDragging = false;
+		});
+
+		wrap.appendChild(cancelBtn);
+	}
+
+	function buildRoomRepliesEl(roomId: string): HTMLElement {
+		const container = el("div", "room-replies");
+		const rids = roomReplies.get(roomId) ?? [];
+		for (const rid of rids) {
+			const entry = replyStore.get(rid);
+			if (!entry) continue;
+			const wrap = el("div", "reply-swipe-wrap");
+			const replyRow = el("button", "room-reply-row");
+			replyRow.type = "button";
+			replyRow.setAttribute("data-reply-id", rid);
+			if (rid === activeReplyId) replyRow.classList.add("active");
+			const dot = el("span", `role-sub-dot ${entry.phase}`);
+			const label = el("span", "room-reply-label");
+			label.textContent = entry.label;
+			replyRow.append(dot, label);
+			replyRow.onclick = (ev) => {
+				ev.stopPropagation();
+				selectReply(rid);
+			};
+			wrap.appendChild(replyRow);
+			if (entry.phase === "running") {
+				attachReplySwipeCancel(wrap, entry);
+			}
 			container.appendChild(wrap);
 		}
-		li.appendChild(container);
+		return container;
 	}
-	/** Re-render only the reply rows under room rows. */
+
 	function updateRoomReplyRows(): void {
-		if (activeRoomLi) renderRoleSubRows(activeRoomLi);
+		for (const li of roomList.querySelectorAll("li")) {
+			const row = li.querySelector(".room-row");
+			if (!row) continue;
+			const roomId = row.getAttribute("data-room-id");
+			if (!roomId) continue;
+			const existing = li.querySelector(".room-replies");
+			if (existing) existing.remove();
+			li.appendChild(buildRoomRepliesEl(roomId));
+		}
+	}
+
+	function upsertSessionReplyPartialText(entry: ReplyEntry, text: string): void {
+		const trimmed = text.trim();
+		if (trimmed) {
+			entry.summary = truncateSummary(trimmed);
+		}
+		const idx = entry.messages.findIndex((m) => (m as { role?: string }).role === "assistant");
+		const msg = { role: "assistant", content: text };
+		if (idx >= 0) {
+			entry.messages[idx] = msg;
+		} else {
+			entry.messages.push(msg);
+		}
 	}
 
 	let statusModelSuffix = "loading models…";
@@ -2052,10 +2189,20 @@ function renderWorkspace(
 		if (msg.phase === "idle" || !label) {
 			activityBar.classList.add("hidden");
 			activityBar.textContent = "";
-			return;
+		} else {
+			activityBar.textContent = label;
+			activityBar.classList.remove("hidden");
 		}
-		activityBar.textContent = label;
-		activityBar.classList.remove("hidden");
+		const sessionEntry = currentSessionReply();
+		if (sessionEntry && msg.phase !== "idle") {
+			const detail = activityPhaseToDetail(msg.phase, msg.detail);
+			if (detail) {
+				sessionEntry.detail = detail;
+				if (activeReplyId === null) {
+					updateStatusRowElement(sessionEntry);
+				}
+			}
+		}
 	}
 
 	function appendMessage(role: string, text: string, meta?: string, animate = true): HTMLElement {
@@ -2177,43 +2324,6 @@ function renderWorkspace(
 		}
 	}
 
-	function renderHistory(msgs: unknown[]): void {
-		// Prevent visible scroll during rendering by hiding overflow temporarily.
-		messages.style.overflow = "hidden";
-		messages.innerHTML = "";
-		streamingAssistantEl = null;
-		streamingAssistantHost = null;
-		lastMetaHost = null;
-		for (const msg of msgs) {
-			const m = msg as { role?: string; customType?: string };
-			if (m.role === "user") {
-				appendMessage("user", getMessageText(msg), undefined, false);
-			} else if (m.role === "assistant") {
-				const assistant = formatAssistantDisplay(getAssistantMessageMeta(msg));
-				appendCollapsibleAssistantMsg(assistant.displayText, false, undefined, false, assistant.isFailed);
-			} else if (m.role === "custom") {
-				const div = el("div", `msg ${messageRoleClass(m)}`);
-				const meta = el("div", "meta");
-				meta.textContent = m.customType ?? "role";
-				div.appendChild(meta);
-				const body = el("div", "msg-body");
-				body.textContent = getMessageText(msg);
-				div.appendChild(body);
-				messages.appendChild(div);
-			}
-		}
-		// Force to bottom synchronously (skip smooth behavior), then restore overflow.
-		messages.scrollTop = messages.scrollHeight;
-		requestAnimationFrame(() => {
-			messages.style.overflow = "";
-		});
-	}
-
-	function lastUserMessageText(): string | null {
-		const last = messages.querySelector(".msg.user:last-child .msg-body");
-		return last?.textContent ?? null;
-	}
-
 	function updateStreamingAssistant(message: unknown, host?: string | null): void {
 		if (!streamingAssistantEl) {
 			return;
@@ -2283,42 +2393,88 @@ function renderWorkspace(
 
 	function updateRoleProgress(msg: HubServerMessage): void {
 		if (msg.type !== "role_progress") return;
-		const role = String(msg.role ?? "");
+		const roleName = String(msg.role ?? "");
 		const phase = String(msg.phase ?? "");
-		const preview = msg.preview ? ` — ${String(msg.preview)}` : "";
-		roleProgressBar.textContent = `Role ${role}: ${phase}${preview}`;
-		roleProgressBar.classList.remove("hidden");
-		if (phase === "done" || phase === "failed") {
-			setTimeout(() => {
-				if (roleProgressBar.textContent?.includes(`${role}: ${phase}`)) {
-					roleProgressBar.classList.add("hidden");
-				}
-			}, 8000);
-		}
-
-		// Update active roles for sub-row display
 		const taskId = String(msg.taskId ?? "");
-		const existing = activeRoles.findIndex((r) => r.taskId === taskId);
-		const fullOutput = typeof msg.fullOutput === "string" ? msg.fullOutput : undefined;
-		const entry = {
-			roleName: role,
-			taskId,
-			phase,
-			preview: typeof msg.preview === "string" ? msg.preview : undefined,
-			fullOutput,
-		};
-		if (existing >= 0) {
-			activeRoles[existing] = entry;
-		} else {
-			activeRoles.push(entry);
-		}
-		if (activeRoomLi) {
-			renderRoleSubRows(activeRoomLi);
+		const roomId = selectedRoomId ?? "";
+		const preview = typeof msg.preview === "string" ? msg.preview : "";
+		const fullOutput = typeof msg.fullOutput === "string" ? msg.fullOutput : preview;
+
+		roleProgressBar.textContent = `Role ${roleName}: ${phase}${preview ? ` — ${preview}` : ""}`;
+		roleProgressBar.classList.remove("hidden");
+
+		const rid = roleReplyId(taskId);
+		let entry = replyStore.get(rid);
+
+		if (phase === "started") {
+			if (!entry) {
+				entry = {
+					id: rid,
+					roomId,
+					kind: "role",
+					label: roleName,
+					roleName,
+					phase: "running",
+					summary: "",
+					messages: [],
+					events: [],
+					startedAt: Date.now(),
+				};
+				replyStore.set(rid, entry);
+				appendReplyId(roomId, rid);
+			} else {
+				entry.phase = "running";
+				entry.detail = undefined;
+			}
+			updateRoomReplyRows();
+			if (activeReplyId === null) {
+				renderRoomStatusBoard();
+			}
+		} else if (phase === "done" || phase === "failed") {
+			if (!entry) {
+				entry = {
+					id: rid,
+					roomId,
+					kind: "role",
+					label: roleName,
+					roleName,
+					phase: phase === "done" ? "done" : "failed",
+					summary: truncateSummary(preview || fullOutput),
+					messages: [
+						{
+							role: "custom",
+							customType: "hub_role_output",
+							content: fullOutput,
+						},
+					],
+					events: [msg],
+					startedAt: Date.now(),
+					endedAt: Date.now(),
+				};
+				replyStore.set(rid, entry);
+				appendReplyId(roomId, rid);
+			} else {
+				entry.phase = phase === "done" ? "done" : "failed";
+				entry.summary = truncateSummary(preview || fullOutput);
+				entry.messages = [
+					{
+						role: "custom",
+						customType: "hub_role_output",
+						content: fullOutput,
+					},
+				];
+				entry.endedAt = Date.now();
+				entry.detail = undefined;
+			}
+			updateRoomReplyRows();
+			if (activeReplyId === null) {
+				renderRoomStatusBoard();
+			} else if (activeReplyId === rid) {
+				renderReplyDetail(rid);
+			}
 		}
 
-		// Update busy state: any started phase means roles are busy
-		rolesBusy = activeRoles.some((r) => r.phase === "started");
-		updateSleepButton();
+		syncRolesBusy();
 	}
 
 	function handleRoleOrchestration(msg: HubServerMessage): void {
@@ -2348,6 +2504,11 @@ function renderWorkspace(
 		}
 	}
 
+	function sessionDetailActive(): boolean {
+		if (!selectedRoomId || !currentTurnId) return false;
+		return activeReplyId === sessionReplyId(selectedRoomId, currentTurnId);
+	}
+
 	function handleAgentEvent(msg: HubServerMessage): void {
 		if (msg.type !== "agent_event") return;
 		const hostDisplayName = (msg.hostDisplayName as string | undefined) ?? turnHostName;
@@ -2361,14 +2522,24 @@ function renderWorkspace(
 			assistantMessageEvent?: { type: string; delta?: string };
 			toolName?: string;
 		};
+		const sessionEntry = currentSessionReply();
+		const detailActive = sessionDetailActive();
+		const statusView = activeReplyId === null;
+
+		if (sessionEntry) {
+			sessionEntry.events.push(msg);
+		}
+
 		if (event.type === "message_start" && event.message) {
 			const m = event.message as { role?: string; customType?: string };
 			if (m.role === "assistant") {
-				// Defer element creation until first content arrives, to avoid empty bubbles
 				streamingAssistantEl = null;
 				streamingAssistantHost = hostDisplayName;
 				setStreamingVisual(true);
-			} else if (m.role === "custom") {
+				if (sessionEntry && statusView) {
+					updateStatusRowElement(sessionEntry);
+				}
+			} else if (m.role === "custom" && detailActive) {
 				const div = el("div", `msg ${messageRoleClass(m)}`);
 				const meta = el("div", "meta");
 				meta.textContent = m.customType ?? "role";
@@ -2384,16 +2555,24 @@ function renderWorkspace(
 			const m = event.message as { role?: string };
 			if (m.role === "assistant") {
 				const assistant = formatAssistantDisplay(getAssistantMessageMeta(event.message));
-				if (!streamingAssistantEl && assistant.displayText.trim()) {
-					streamingAssistantEl = appendCollapsibleAssistantMsg(
-						assistant.displayText,
-						true,
-						assistantMetaLabel(streamingAssistantHost),
-						true,
-						assistant.isFailed,
-					);
-				} else if (streamingAssistantEl) {
-					updateStreamingAssistant(event.message, hostDisplayName);
+				if (sessionEntry) {
+					upsertSessionReplyPartialText(sessionEntry, assistant.displayText);
+					if (statusView) {
+						updateStatusRowElement(sessionEntry);
+					}
+				}
+				if (detailActive) {
+					if (!streamingAssistantEl && assistant.displayText.trim()) {
+						streamingAssistantEl = appendCollapsibleAssistantMsg(
+							assistant.displayText,
+							true,
+							assistantMetaLabel(streamingAssistantHost),
+							true,
+							assistant.isFailed,
+						);
+					} else if (streamingAssistantEl) {
+						updateStreamingAssistant(event.message, hostDisplayName);
+					}
 				}
 			}
 		}
@@ -2401,45 +2580,60 @@ function renderWorkspace(
 			const m = event.message as { role?: string };
 			if (m.role === "assistant") {
 				const assistant = formatAssistantDisplay(getAssistantMessageMeta(event.message));
-				if (!streamingAssistantEl) {
-					streamingAssistantEl = appendCollapsibleAssistantMsg(
-						assistant.displayText,
-						false,
-						assistantMetaLabel(streamingAssistantHost),
-						true,
-						assistant.isFailed,
-					);
-				} else {
-					updateStreamingAssistant(event.message, hostDisplayName);
+				if (sessionEntry) {
+					upsertSessionReplyPartialText(sessionEntry, assistant.displayText);
+					if (assistant.isFailed) {
+						sessionEntry.phase = "failed";
+						sessionEntry.summary = truncateSummary(assistant.displayText);
+					}
+					if (statusView) {
+						updateStatusRowElement(sessionEntry);
+					}
 				}
-				if (assistant.bannerMessage) {
+				if (detailActive) {
+					if (!streamingAssistantEl) {
+						streamingAssistantEl = appendCollapsibleAssistantMsg(
+							assistant.displayText,
+							false,
+							assistantMetaLabel(streamingAssistantHost),
+							true,
+							assistant.isFailed,
+						);
+					} else {
+						updateStreamingAssistant(event.message, hostDisplayName);
+					}
+					if (assistant.bannerMessage) {
+						showError(assistant.bannerMessage);
+					}
+					if (streamingAssistantEl) {
+						finalizeCollapsibleAssistantMsg(streamingAssistantEl);
+					}
+				} else if (assistant.bannerMessage) {
 					showError(assistant.bannerMessage);
-				}
-				if (streamingAssistantEl) {
-					finalizeCollapsibleAssistantMsg(streamingAssistantEl);
 				}
 				streamingAssistantEl = null;
 				streamingAssistantHost = null;
 				setStreamingVisual(false);
-			} else if (m.role === "user") {
-				const text = getMessageText(m);
-				if (text && text !== lastUserMessageText()) {
-					appendMessage("user", text);
-				}
 			}
 		}
 		if (event.type === "agent_end" && Array.isArray(event.messages)) {
-			renderHistory(event.messages);
 			updateTokenStats(event.messages);
-			// Store session reply for room list sub-row
-			sessionReplyId = `session-${Date.now()}`;
-			replyStore.set(sessionReplyId, {
-				roomId: selectedRoomId ?? "",
-				label: `[session] ${statusModelSuffix}`,
-				preview: getMessageText(event.messages[event.messages.length - 1] ?? "").slice(0, 60),
-				messages: event.messages,
-			});
-			updateRoomReplyRows();
+			if (sessionEntry) {
+				const lastAssistant = [...event.messages]
+					.reverse()
+					.find((m) => (m as { role?: string }).role === "assistant");
+				sessionEntry.phase = "done";
+				sessionEntry.messages = event.messages;
+				sessionEntry.summary = truncateSummary(getMessageText(lastAssistant ?? {}));
+				sessionEntry.endedAt = Date.now();
+				sessionEntry.detail = undefined;
+				updateRoomReplyRows();
+				if (detailActive) {
+					renderReplyDetail(sessionEntry.id);
+				} else if (statusView) {
+					renderRoomStatusBoard();
+				}
+			}
 			setStreamingVisual(false);
 		}
 
@@ -2447,8 +2641,15 @@ function renderWorkspace(
 			const toolCallId = (event as Record<string, unknown>).toolCallId as string;
 			const toolName = (event as Record<string, unknown>).toolName as string;
 			const args = (event as Record<string, unknown>).args;
-			const host = hostDisplayName ?? turnHostName;
+			if (sessionEntry) {
+				sessionEntry.detail = toolName ? `调用工具 ${toolName}` : "调用工具";
+				if (statusView) {
+					updateStatusRowElement(sessionEntry);
+				}
+			}
+			if (!detailActive) return;
 
+			const host = hostDisplayName ?? turnHostName;
 			const div = el("div", "msg tool tool-collapsible");
 			const headerLine = el("div", "tool-header");
 			const indicator = el("span", "tool-toggle");
@@ -2481,6 +2682,7 @@ function renderWorkspace(
 		}
 		if (
 			event.type === "tool_execution_update" &&
+			detailActive &&
 			toolMsgMap.has((event as Record<string, unknown>).toolCallId as string)
 		) {
 			const entry = toolMsgMap.get((event as Record<string, unknown>).toolCallId as string)!;
@@ -2491,6 +2693,7 @@ function renderWorkspace(
 		}
 		if (
 			event.type === "tool_execution_end" &&
+			detailActive &&
 			toolMsgMap.has((event as Record<string, unknown>).toolCallId as string)
 		) {
 			const entry = toolMsgMap.get((event as Record<string, unknown>).toolCallId as string)!;
@@ -2682,6 +2885,7 @@ function renderWorkspace(
 
 	function clearChatPanels(): void {
 		messages.innerHTML = "";
+		messages.appendChild(heroEl);
 		roleGapBar.classList.add("hidden");
 		roleGapBar.textContent = "";
 		rolePlanPanel.classList.add("hidden");
@@ -2698,11 +2902,20 @@ function renderWorkspace(
 		streamingAssistantHost = null;
 		lastMetaHost = null;
 		toolMsgMap = new Map();
-		activeRoles = [];
-		if (activeRoomLi) {
-			renderRoleSubRows(activeRoomLi);
-		}
+		currentTurnId = null;
 		setStreamingVisual(false);
+		updateHeroVisibility();
+	}
+
+	function ingestJoinHistory(roomId: string, msgs: unknown[]): void {
+		const users: Array<{ text: string; meta: string }> = [];
+		for (const msg of msgs) {
+			const m = msg as { role?: string };
+			if (m.role === "user") {
+				users.push({ text: getMessageText(msg), meta: session.displayName });
+			}
+		}
+		roomUserMessages.set(roomId, users);
 	}
 
 	async function selectRoom(roomId: string): Promise<void> {
@@ -2717,6 +2930,7 @@ function renderWorkspace(
 		}
 
 		selectInFlight = true;
+		activeReplyId = null;
 		selectedRoomId = roomId;
 		updateRailHighlight();
 		roomLabel.textContent = roomId;
@@ -2763,10 +2977,14 @@ function renderWorkspace(
 			return;
 		}
 		if (msg.type === "room_deleted") {
+			const deletedId = msg.roomId as string;
+			purgeRoomReplies(deletedId);
+			roomTitleById.delete(deletedId);
 			void refreshRoomList();
-			if (msg.roomId === selectedRoomId) {
+			if (deletedId === selectedRoomId) {
 				showError("This room was deleted");
 				selectedRoomId = null;
+				activeReplyId = null;
 				updateRailHighlight();
 				roomLabel.textContent = "Select a room";
 				clearChatPanels();
@@ -2784,8 +3002,9 @@ function renderWorkspace(
 			clientId = (msg.clientId as string) ?? "";
 			applyStateModel(msg.state as HubSessionState | undefined);
 			const historyMsgs = (msg.messages as unknown[]) ?? [];
-			renderHistory(historyMsgs);
+			ingestJoinHistory(joinedRoomId, historyMsgs);
 			updateTokenStats(historyMsgs);
+			refreshMessagesPanel();
 			void loadRoomConfigUi(joinedRoomId).catch((e) => showError(e instanceof Error ? e.message : String(e)));
 			void refreshModelList(
 				(msg.state as HubSessionState | undefined)?.model?.provider && (msg.state as HubSessionState).model?.id
@@ -2871,7 +3090,32 @@ function renderWorkspace(
 		attachedFiles.length = 0;
 		renderChips();
 
-		appendMessage("user", displayText, session.displayName);
+		const roomId = selectedRoomId;
+		currentTurnId = String(Date.now());
+		const turnId = currentTurnId;
+		const sid = sessionReplyId(roomId, turnId);
+		const label = getRoomDisplayLabel(roomId);
+		replyStore.set(sid, {
+			id: sid,
+			roomId,
+			kind: "session",
+			label,
+			phase: "running",
+			summary: "",
+			messages: [],
+			events: [],
+			startedAt: Date.now(),
+		});
+		appendReplyId(roomId, sid);
+
+		const users = roomUserMessages.get(roomId) ?? [];
+		users.push({ text: displayText, meta: session.displayName });
+		roomUserMessages.set(roomId, users);
+
+		activeReplyId = null;
+		refreshMessagesPanel();
+		updateRoomReplyRows();
+
 		client.prompt(text, images.length > 0 ? { images } : undefined);
 	};
 

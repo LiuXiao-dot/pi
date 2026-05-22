@@ -889,9 +889,9 @@ select {
   box-shadow: -2px 0 0 var(--error-border);
 }
 
-/* === Role Sub-Rows (room list) === */
+/* === Room reply sub-tabs (room list) === */
 
-.room-role-sub-rows {
+.room-replies {
   margin-top: 0.2rem;
   display: flex;
   flex-direction: column;
@@ -899,7 +899,7 @@ select {
   padding-left: 0.85rem;
 }
 
-.room-role-sub-row {
+.room-reply-row {
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -909,7 +909,7 @@ select {
   border-radius: var(--radius-sm);
   background: var(--bg-subtle);
   padding: 0.35rem 0.65rem;
-  cursor: default;
+  cursor: pointer;
   font: inherit;
   font-size: 0.75rem;
   color: var(--text-body);
@@ -918,13 +918,19 @@ select {
     background var(--duration-fast);
 }
 
-.room-role-sub-row.clickable {
-  cursor: pointer;
+.room-reply-row:hover,
+.room-reply-row.active {
+  border-color: var(--accent-ring);
+  background: var(--accent-soft);
 }
 
-.room-role-sub-row.clickable:hover {
-  border-color: rgba(0, 217, 213, 0.2);
-  background: var(--accent-soft);
+.room-reply-label {
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .role-sub-dot {
@@ -935,7 +941,9 @@ select {
   background: var(--text-muted);
 }
 
-.role-sub-dot.started {
+.role-sub-dot.running,
+.role-sub-dot.started,
+.role-sub-dot.replying {
   background: #fbbf24;
   animation: pulse-dot 1.2s ease-in-out infinite;
 }
@@ -1313,6 +1321,68 @@ select {
   gap: 0.85rem;
   scroll-behavior: smooth;
   background: var(--bg-deep);
+}
+
+.reply-detail-back-bar {
+  align-self: stretch;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  padding: 0.55rem 0.85rem;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast),
+    background var(--duration-fast);
+}
+
+.reply-detail-back-bar:hover {
+  border-color: var(--accent-ring);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.room-status-row {
+  align-self: stretch;
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  padding: 0.65rem 0.9rem;
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--text-body);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast),
+    background var(--duration-fast);
+}
+
+.room-status-row:hover {
+  border-color: var(--accent-ring);
+  background: var(--accent-soft);
+}
+
+.room-status-row.running {
+  border-left: 3px solid #fbbf24;
+}
+
+.room-status-row.done {
+  border-left: 3px solid var(--success);
+}
+
+.room-status-row.failed {
+  border-left: 3px solid var(--error);
+}
+
+.room-status-text {
+  display: block;
 }
 
 .msg {
