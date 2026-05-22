@@ -271,6 +271,8 @@ export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
 export interface UserMessage {
 	role: "user";
 	content: string | (TextContent | ImageContent)[];
+	/** When false, the message should not be displayed in the UI (internal/system messages). Defaults to true. */
+	display?: boolean;
 	timestamp: number; // Unix timestamp in milliseconds
 }
 

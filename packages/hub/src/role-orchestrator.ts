@@ -365,7 +365,14 @@ export class RoleOrchestrator {
 			}
 
 			const synthesisMessage = buildSynthesisPrompt(persistedText, plan, results);
-			await this.session.prompt(synthesisMessage, { source: "rpc" });
+			// Use direct agent.prompt() with display:false so the internal synthesis
+			// message is invisible to clients but the LLM still generates a response.
+			await this.session.agent.prompt({
+				role: "user",
+				content: synthesisMessage,
+				display: false,
+				timestamp: Date.now(),
+			});
 		} else if (mentionedWorkers.length > 0) {
 			// === Direct mode: each @mentioned worker role runs independently ===
 			const results: RoleTaskResult[] = [];
@@ -420,14 +427,24 @@ export class RoleOrchestrator {
 			if (results.length === 1) {
 				const r = results[0]!;
 				if (r.exitCode === 0) {
-					await this.session.prompt(r.output, { source: "rpc" });
+					await this.session.agent.prompt({
+						role: "user",
+						content: r.output,
+						display: false,
+						timestamp: Date.now(),
+					});
 				}
 			} else {
 				const sections = results.map(
 					(r) => `### Role: ${r.role} (${r.exitCode === 0 ? "completed" : "failed"})\n\n${r.output}`,
 				);
 				const combined = `[Multi-role direct responses]\n\nOriginal request:\n${persistedText}\n\n${sections.join("\n\n---\n\n")}`;
-				await this.session.prompt(combined, { source: "rpc" });
+				await this.session.agent.prompt({
+					role: "user",
+					content: combined,
+					display: false,
+					timestamp: Date.now(),
+				});
 			}
 		}
 	}

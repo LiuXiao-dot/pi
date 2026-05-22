@@ -7,9 +7,11 @@ import type {
 	HubModelInfo,
 	HubModelsConfigPayload,
 	HubRoleMemory,
+	HubRoleSummaryEntry,
 	HubRoomSummary,
 	HubServerMessage,
 	HubSessionState,
+	HubSkillSummaryEntry,
 	HubSleepPhase,
 } from "./protocol.ts";
 
@@ -486,16 +488,34 @@ function renderWorkspace(
 	const roomToolbar = el("div", "room-toolbar");
 	const newRoomIdInput = el("input") as HTMLInputElement;
 	newRoomIdInput.placeholder = "new-room-id";
-	const newRoomWsInput = el("input") as HTMLInputElement;
-	newRoomWsInput.placeholder = "workspace (optional, default hub cwd)";
+	const browseWsBtn = el("button", "secondary-btn");
+	browseWsBtn.type = "button";
+	browseWsBtn.textContent = "Browse…";
 	const createBtn = el("button", "secondary-btn");
 	createBtn.type = "button";
 	createBtn.textContent = "Create";
-	roomToolbar.append(newRoomIdInput, newRoomWsInput, createBtn);
+	roomToolbar.append(newRoomIdInput, browseWsBtn, createBtn);
 
 	const railErr = el("div", "error-banner hidden");
 	const roomList = el("ul", "room-list");
-	roomRail.append(railHeader, roomToolbar, railErr, roomList);
+
+	const wsPathRow = el("div", "ws-path-row hidden");
+	const wsPathLabel = el("span", "ws-path-label");
+	wsPathLabel.textContent = "Workspace: ";
+	const wsPathValue = el("span", "ws-path-value");
+	const wsClearBtn = el("button", "ws-path-clear");
+	wsClearBtn.type = "button";
+	wsClearBtn.textContent = "×";
+	wsPathRow.append(wsPathLabel, wsPathValue, wsClearBtn);
+
+	let selectedWorkspace = "";
+
+	wsClearBtn.onclick = () => {
+		selectedWorkspace = "";
+		wsPathRow.classList.add("hidden");
+	};
+
+	roomRail.append(railHeader, roomToolbar, wsPathRow, railErr, roomList);
 
 	// Account row pinned to the bottom of the sidebar
 	const accountRow = el("div", "room-rail-account");
@@ -729,10 +749,11 @@ function renderWorkspace(
 		if (!id) return;
 		void (async () => {
 			try {
-				const workspace = newRoomWsInput.value.trim() || undefined;
+				const workspace = selectedWorkspace || undefined;
 				await client.createRoom(id, undefined, workspace);
 				newRoomIdInput.value = "";
-				newRoomWsInput.value = "";
+				selectedWorkspace = "";
+				wsPathRow.classList.add("hidden");
 				await refreshRoomList();
 				await selectRoom(id);
 			} catch (e) {
@@ -740,6 +761,122 @@ function renderWorkspace(
 			}
 		})();
 	};
+
+	browseWsBtn.onclick = () => {
+		showFolderPickerModal(selectedWorkspace || "", (path) => {
+			selectedWorkspace = path;
+			if (path) {
+				wsPathValue.textContent = path;
+				wsPathRow.classList.remove("hidden");
+			} else {
+				wsPathRow.classList.add("hidden");
+			}
+		});
+	};
+
+	function showFolderPickerModal(currentPath: string, onSelect: (path: string) => void): void {
+		const backdrop = el("div", "modal-backdrop");
+		const modal = el("div", "modal config-modal folder-picker-modal");
+
+		const title = el("h3");
+		title.textContent = "Select workspace folder";
+		modal.appendChild(title);
+
+		const pathBar = el("div", "folder-picker-path");
+		const pathInput = el("input") as HTMLInputElement;
+		pathInput.value = currentPath;
+		pathInput.placeholder = "Loading…";
+		pathBar.appendChild(pathInput);
+		modal.appendChild(pathBar);
+
+		const list = el("div", "folder-picker-list");
+		modal.appendChild(list);
+
+		function updateSelectLabel(): void {
+			const lastSegment = currentPath.replace(/\\/g, "/").split("/").filter(Boolean).pop() || currentPath;
+			selectBtn.textContent = `Select "${lastSegment}"`;
+		}
+
+		async function loadDir(dirPath: string): Promise<void> {
+			list.innerHTML = "<p style='padding:0.5rem;color:var(--muted)'>Loading…</p>";
+			pathInput.value = dirPath;
+			try {
+				const result = await client.listDirectory(dirPath || undefined);
+				currentPath = result.path;
+				pathInput.value = result.path;
+				updateSelectLabel();
+				renderEntries(result.path, result.entries);
+			} catch (e) {
+				list.innerHTML = `<p style='padding:0.5rem;color:var(--error)'>Error: ${e instanceof Error ? e.message : String(e)}</p>`;
+			}
+		}
+
+		function renderEntries(basePath: string, entries: Array<{ name: string; isDirectory: boolean }>): void {
+			list.innerHTML = "";
+
+			// Parent directory entry
+			const parentItem = el("button", "folder-picker-item folder-picker-parent");
+			parentItem.type = "button";
+			const parentLabel = el("span", "folder-picker-item-name");
+			parentLabel.textContent = "..";
+			parentItem.appendChild(parentLabel);
+			parentItem.onclick = () => {
+				const parent = resolvePath(basePath, "..");
+				void loadDir(parent);
+			};
+			list.appendChild(parentItem);
+
+			if (entries.length === 0) {
+				const empty = el("p", "folder-picker-empty");
+				empty.textContent = "No subdirectories found.";
+				list.appendChild(empty);
+				return;
+			}
+
+			for (const entry of entries) {
+				const item = el("button", "folder-picker-item");
+				item.type = "button";
+				const icon = el("span", "folder-picker-item-icon");
+				icon.textContent = "📁";
+				const name = el("span", "folder-picker-item-name");
+				name.textContent = entry.name;
+				item.append(icon, name);
+				item.onclick = () => {
+					void loadDir(resolvePath(basePath, entry.name));
+				};
+				list.appendChild(item);
+			}
+		}
+
+		// Helper: resolve a relative segment against a base path (server-side path).
+		function resolvePath(base: string, segment: string): string {
+			const parts = base.replace(/\\/g, "/").split("/").filter(Boolean);
+			if (segment === "..") {
+				if (parts.length > 0) parts.pop();
+				return `/${parts.join("/")}`;
+			}
+			parts.push(segment);
+			return `/${parts.join("/")}`;
+		}
+
+		const actions = el("div", "modal-actions");
+		const selectBtn = el("button", "primary-btn");
+		selectBtn.textContent = "Select";
+		selectBtn.onclick = () => {
+			onSelect(currentPath);
+			backdrop.remove();
+		};
+		const cancelBtn = el("button", "secondary-btn");
+		cancelBtn.textContent = "Cancel";
+		cancelBtn.onclick = () => backdrop.remove();
+		actions.append(selectBtn, cancelBtn);
+		modal.appendChild(actions);
+
+		backdrop.appendChild(modal);
+		document.body.appendChild(backdrop);
+
+		void loadDir(currentPath || ".");
+	}
 
 	const layout = el("div", "chat-layout");
 	const panel = el("div", "chat-panel");
@@ -861,6 +998,18 @@ function renderWorkspace(
 	statusWrap.append(statusDot, status);
 	header.append(headerBrand, statusWrap);
 	panel.appendChild(header);
+
+	// Room info bar — shows room metadata from joined event
+	const roomInfoBar = el("div", "room-info-bar hidden");
+	const roomInfoTitle = el("span", "room-info-title");
+	const roomInfoBadges = el("span", "room-info-badges");
+	const roomInfoModel = el("span", "room-info-badge room-info-model");
+	const roomInfoRoles = el("span", "room-info-badge room-info-roles");
+	const roomInfoSkills = el("span", "room-info-badge room-info-skills");
+	const roomInfoRules = el("span", "room-info-badge room-info-rules");
+	roomInfoBadges.append(roomInfoModel, roomInfoRoles, roomInfoSkills, roomInfoRules);
+	roomInfoBar.append(roomInfoTitle, roomInfoBadges);
+	panel.insertBefore(roomInfoBar, panel.querySelector(".model-bar"));
 
 	function setConnectionLive(live: boolean): void {
 		statusDot.classList.toggle("live", live);
@@ -1899,11 +2048,14 @@ function renderWorkspace(
 				role?: string;
 				customType?: string;
 				content?: unknown;
+				display?: boolean;
 				summary?: string;
 				tokensBefore?: number;
 				toolName?: string;
 				isError?: boolean;
 			};
+			// Skip internal/system messages marked as non-displayable
+			if (m.display === false) continue;
 			if (m.role === "compactionSummary") {
 				const banner = el("div", "msg compaction-banner");
 				const meta = el("div", "meta");
@@ -2214,6 +2366,60 @@ function renderWorkspace(
 			statusModelSuffix = "no model";
 		}
 		updateHeaderStatus();
+	}
+
+	function updateRoomInfo(msg: { [key: string]: unknown }): void {
+		const roomTitle = typeof msg.roomTitle === "string" ? msg.roomTitle : undefined;
+		const roomModel = typeof msg.roomModel === "string" ? msg.roomModel : undefined;
+		const roomRoles = Array.isArray(msg.roomRoles) ? (msg.roomRoles as HubRoleSummaryEntry[]) : [];
+		const roomSkills = Array.isArray(msg.roomSkills) ? (msg.roomSkills as HubSkillSummaryEntry[]) : [];
+		const roomRules = typeof msg.roomRules === "string" && msg.roomRules.trim() ? msg.roomRules : undefined;
+
+		const hasInfo = roomTitle || roomModel || roomRoles.length > 0 || roomSkills.length > 0 || roomRules;
+		if (!hasInfo) {
+			roomInfoBar.classList.add("hidden");
+			return;
+		}
+
+		roomInfoBar.classList.remove("hidden");
+		roomInfoTitle.textContent = roomTitle && roomTitle !== selectedRoomId ? roomTitle : "";
+
+		// Model badge
+		if (roomModel) {
+			roomInfoModel.textContent = roomModel;
+			roomInfoModel.classList.remove("hidden");
+		} else {
+			roomInfoModel.classList.add("hidden");
+		}
+
+		// Roles badge
+		if (roomRoles.length > 0) {
+			roomInfoRoles.textContent = `${roomRoles.length} role${roomRoles.length !== 1 ? "s" : ""}`;
+			roomInfoRoles.title = roomRoles.map((r) => `${r.name}: ${r.description}`).join("\n");
+			roomInfoRoles.classList.remove("hidden");
+		} else {
+			roomInfoRoles.classList.add("hidden");
+		}
+
+		// Skills badge
+		if (roomSkills.length > 0) {
+			roomInfoSkills.textContent = `${roomSkills.length} skill${roomSkills.length !== 1 ? "s" : ""}`;
+			roomInfoSkills.title = roomSkills
+				.map((s) => `${s.name}${s.description ? `: ${s.description}` : ""}`)
+				.join("\n");
+			roomInfoSkills.classList.remove("hidden");
+		} else {
+			roomInfoSkills.classList.add("hidden");
+		}
+
+		// Rules badge
+		if (roomRules) {
+			roomInfoRules.textContent = "Rules";
+			roomInfoRules.title = roomRules;
+			roomInfoRules.classList.remove("hidden");
+		} else {
+			roomInfoRules.classList.add("hidden");
+		}
 	}
 
 	function fillModelSelect(models: HubModelInfo[], selected?: { provider: string; id: string }): void {
@@ -2708,8 +2914,11 @@ function renderWorkspace(
 		}
 
 		if (event.type === "message_start" && event.message) {
-			const m = event.message as { role?: string; customType?: string };
-			if (m.role === "assistant") {
+			const m = event.message as { role?: string; customType?: string; display?: boolean };
+			// Skip internal/system messages
+			if (m.display === false) {
+				/* skip */
+			} else if (m.role === "assistant") {
 				streamingAssistantEl = null;
 				streamingAssistantHost = hostDisplayName;
 				setStreamingVisual(true);
@@ -3139,8 +3348,11 @@ function renderWorkspace(
 			const m = msg as {
 				role?: string;
 				customType?: string;
+				display?: boolean;
 				details?: Record<string, unknown>;
 			};
+			// Skip internal/system messages marked as non-displayable
+			if (m.display === false) continue;
 			const ts = tsOf(msg);
 
 			if (m.role === "compactionSummary") {
@@ -3360,6 +3572,7 @@ function renderWorkspace(
 						}
 					: undefined,
 			).catch((e) => showError(e instanceof Error ? e.message : String(e)));
+			updateRoomInfo(msg);
 		}
 		if (msg.type === "state_update") {
 			applyStateModel(msg.state as HubSessionState | undefined);

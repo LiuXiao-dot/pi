@@ -511,7 +511,10 @@ export class AgentSession {
 				event.message.role === "toolResult"
 			) {
 				// Regular LLM message - persist as SessionMessageEntry
-				this.sessionManager.appendMessage(event.message);
+				// Skip persisting user messages with display:false (internal/system messages)
+				if (event.message.role !== "user" || (event.message as { display?: boolean }).display !== false) {
+					this.sessionManager.appendMessage(event.message);
+				}
 			}
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
 
@@ -1296,12 +1299,8 @@ export class AgentSession {
 			await this._runAgentPrompt(appMessage);
 		} else {
 			this.agent.state.messages.push(appMessage);
-			this.sessionManager.appendCustomMessageEntry(
-				message.customType,
-				message.content,
-				message.display,
-				message.details,
-			);
+			// Persistence is handled by _handleAgentEvent when it processes the
+			// emitted message_end event (avoids double-persist).
 			this._emit({ type: "message_start", message: appMessage });
 			this._emit({ type: "message_end", message: appMessage });
 		}
