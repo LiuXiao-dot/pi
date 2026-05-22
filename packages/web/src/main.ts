@@ -4,9 +4,11 @@ import type {
 	HubActivityUpdateMessage,
 	HubModelInfo,
 	HubModelsConfigPayload,
+	HubRoleMemory,
 	HubRoomSummary,
 	HubServerMessage,
 	HubSessionState,
+	HubSleepPhase,
 } from "./protocol.ts";
 
 interface StoredSession {
@@ -494,6 +496,41 @@ function renderWorkspace(
 
 			swipeWrap.appendChild(row);
 			li.append(deleteAction, swipeWrap);
+
+			// Reply rows: session model + role replies under this room
+			const replyContainer = el("div", "room-replies");
+			const rids = roomReplies.get(roomId) ?? [];
+			for (const rid of rids) {
+				const reply = replyStore.get(rid);
+				if (!reply) continue;
+				const replyRow = el("button", "room-reply-row");
+				replyRow.type = "button";
+				replyRow.setAttribute("data-reply-id", rid);
+				if (rid === activeReplyId) replyRow.classList.add("active");
+				const dot = el("span", "room-reply-dot");
+				const label = el("span", "room-reply-label");
+				label.textContent = reply.label;
+				const preview = el("span", "room-reply-preview");
+				preview.textContent = reply.preview;
+				replyRow.append(dot, label, preview);
+				replyRow.onclick = (ev) => {
+					ev.stopPropagation();
+					activeReplyId = rid;
+					// If not joined to this room, join first
+					if (selectedRoomId !== roomId) {
+						void selectRoom(roomId).then(() => {
+							renderHistory(reply.messages);
+							updateRoomReplyRows();
+						});
+					} else {
+						renderHistory(reply.messages);
+						updateRoomReplyRows();
+					}
+				};
+				replyContainer.appendChild(replyRow);
+			}
+			li.appendChild(replyContainer);
+
 			roomList.appendChild(li);
 
 			// Render role sub-rows for the active room
@@ -578,9 +615,45 @@ function renderWorkspace(
 			}
 		})();
 	};
+	let roomBusy = false;
+	let rolesBusy = false;
+	let isSleeping = false;
+
+	function canSleep(): boolean {
+		return !roomBusy && !rolesBusy && !isSleeping;
+	}
+
+	function updateSleepButton(): void {
+		sleepItem.disabled = !canSleep();
+		if (isSleeping) {
+			sleepItem.textContent = "Sleeping…";
+		} else if (!canSleep()) {
+			sleepItem.textContent = "睡觉 (busy)";
+		} else {
+			sleepItem.textContent = "睡觉";
+		}
+	}
+
 	const sleepItem = el("button", "life-popup-item");
 	sleepItem.textContent = "睡觉";
 	sleepItem.disabled = true;
+	sleepItem.onclick = (e) => {
+		e.stopPropagation();
+		lifePopup.classList.add("hidden");
+		if (!selectedRoomId || !client.isJoined() || !canSleep()) return;
+		void (async () => {
+			try {
+				isSleeping = true;
+				updateSleepButton();
+				await client.sleepRoom(selectedRoomId!);
+			} catch (e) {
+				showError(e instanceof Error ? e.message : String(e));
+			} finally {
+				isSleeping = false;
+				updateSleepButton();
+			}
+		})();
+	};
 	lifePopup.append(rebirthItem, sleepItem);
 	lifeBtn.onclick = (e) => {
 		e.stopPropagation();
@@ -1149,6 +1222,20 @@ function renderWorkspace(
 		title.textContent = "Role library";
 		modal.appendChild(title);
 
+		// Tab bar
+		const tabBar = el("div", "role-lib-tabs");
+		const editorTab = el("button", "role-lib-tab active");
+		editorTab.textContent = "Editor";
+		editorTab.type = "button";
+		const memoryTab = el("button", "role-lib-tab");
+		memoryTab.textContent = "Memory";
+		memoryTab.type = "button";
+		tabBar.append(editorTab, memoryTab);
+		modal.appendChild(tabBar);
+
+		// Editor panel wrapper
+		const editorPanel = el("div", "role-lib-panel");
+
 		// Select existing role + New button
 		const nameRow = el("div", "sidebar-row");
 		const select = el("select") as HTMLSelectElement;
@@ -1156,7 +1243,7 @@ function renderWorkspace(
 		newBtn.type = "button";
 		newBtn.textContent = "New";
 		nameRow.append(select, newBtn);
-		modal.appendChild(nameRow);
+		editorPanel.appendChild(nameRow);
 
 		// New role name input (shown when New is clicked)
 		const newNameInput = el("input") as HTMLInputElement;
@@ -1164,15 +1251,15 @@ function renderWorkspace(
 		newNameInput.style.display = "none";
 		const newNameRow = el("div", "sidebar-row");
 		newNameRow.appendChild(newNameInput);
-		modal.appendChild(newNameRow);
+		editorPanel.appendChild(newNameRow);
 
 		const meta = el("div", "role-meta");
-		modal.appendChild(meta);
+		editorPanel.appendChild(meta);
 
 		const editor = el("textarea", "role-editor") as HTMLTextAreaElement;
 		editor.rows = 12;
 		editor.spellcheck = false;
-		modal.appendChild(editor);
+		editorPanel.appendChild(editor);
 
 		// Skills section in role editor
 		const roleSkillsLabel = el("label", "config-field");
@@ -1221,7 +1308,105 @@ function renderWorkspace(
 		};
 
 		roleSkillsLabel.append(roleSkillsChips, roleSkillsBtn);
-		modal.appendChild(roleSkillsLabel);
+		editorPanel.appendChild(roleSkillsLabel);
+		modal.appendChild(editorPanel);
+
+		// Memory panel
+		const memoryPanel = el("div", "role-lib-panel hidden");
+		const memoryLoading = el("p", "role-memory-loading");
+		memoryLoading.textContent = "Select a role to view memories.";
+		memoryPanel.appendChild(memoryLoading);
+		const memoryList = el("div", "role-memory-list");
+		memoryPanel.appendChild(memoryList);
+		modal.appendChild(memoryPanel);
+
+		async function loadMemories(roleName: string): Promise<void> {
+			memoryList.innerHTML = "";
+			memoryLoading.textContent = "Loading memories…";
+			memoryLoading.style.display = "";
+			try {
+				const memories = await client.getRoleMemory(roleName);
+				renderMemories(memories);
+			} catch (e) {
+				memoryLoading.textContent = `Error: ${e instanceof Error ? e.message : String(e)}`;
+			}
+		}
+
+		function renderMemories(memories: HubRoleMemory[]): void {
+			memoryList.innerHTML = "";
+			if (memories.length === 0) {
+				memoryLoading.textContent = "No memories stored for this role.";
+				memoryLoading.style.display = "";
+				return;
+			}
+			memoryLoading.style.display = "none";
+
+			// Clear all button
+			const clearAllRow = el("div", "memory-clear-row");
+			const clearAllBtn = el("button", "secondary-btn danger-btn");
+			clearAllBtn.type = "button";
+			clearAllBtn.textContent = `Clear all (${memories.length})`;
+			clearAllRow.appendChild(clearAllBtn);
+			memoryList.appendChild(clearAllRow);
+
+			for (const mem of memories) {
+				const card = el("div", "memory-card");
+				const header = el("div", "memory-card-header");
+				const ts = el("span", "memory-card-ts");
+				ts.textContent = formatRelativeTime(mem.ts);
+				const roomTag = el("span", "memory-card-room");
+				roomTag.textContent = mem.room;
+				const delBtn = el("button", "memory-card-delete");
+				delBtn.type = "button";
+				delBtn.textContent = "×";
+				delBtn.onclick = () => {
+					void (async () => {
+						try {
+							await client.deleteRoleMemory(select.value, mem.seq);
+							await loadMemories(select.value);
+						} catch (e) {
+							showError(e instanceof Error ? e.message : String(e));
+						}
+					})();
+				};
+				header.append(ts, roomTag, delBtn);
+				const goalP = el("p", "memory-card-goal");
+				goalP.textContent = `Goal: ${mem.goal}`;
+				const resultP = el("p", "memory-card-result");
+				resultP.textContent = `Result: ${mem.result}`;
+				card.append(header, goalP, resultP);
+				memoryList.appendChild(card);
+			}
+
+			clearAllBtn.onclick = () => {
+				if (!confirm(`Delete all ${memories.length} memories for "${select.value}"?`)) return;
+				void (async () => {
+					try {
+						await client.clearRoleMemory(select.value);
+						await loadMemories(select.value);
+					} catch (e) {
+						showError(e instanceof Error ? e.message : String(e));
+					}
+				})();
+			};
+		}
+
+		// Tab switching
+		editorTab.onclick = () => {
+			editorTab.classList.add("active");
+			memoryTab.classList.remove("active");
+			editorPanel.classList.remove("hidden");
+			memoryPanel.classList.add("hidden");
+			newNameInput.style.display = "none";
+		};
+		memoryTab.onclick = () => {
+			memoryTab.classList.add("active");
+			editorTab.classList.remove("active");
+			editorPanel.classList.add("hidden");
+			memoryPanel.classList.remove("hidden");
+			const name = select.value;
+			if (name) void loadMemories(name);
+		};
 
 		async function loadRole(name: string): Promise<void> {
 			const role = await client.getRole(name);
@@ -1345,110 +1530,84 @@ function renderWorkspace(
 		[];
 	let activeRoomLi: HTMLElement | null = null;
 
-	function showRoleOutputModal(role: {
-		roleName: string;
-		phase: string;
-		preview?: string;
-		fullOutput?: string;
-	}): void {
-		const backdrop = el("div", "modal-backdrop");
-		const modal = el("div", "modal");
-		modal.style.maxWidth = "600px";
-
-		// Role info panel header
-		const panel = el("div", "role-info-panel");
-
-		const header = el("div", "role-info-header");
-		const icon = el("div", "role-info-icon");
-		icon.textContent = "⚙";
-		const titleGroup = el("div");
-		const title = el("div", "role-info-title");
-		title.textContent = role.roleName;
-		const subtitle = el("div", "role-info-subtitle");
-		subtitle.textContent = "Role output";
-		titleGroup.append(title, subtitle);
-
-		const statusWrap = el("div", "role-info-status");
-		const statusDot = el("span", "role-info-status-dot");
-		const isRunning = role.phase === "started";
-		const isDone = role.phase === "done";
-		const isFailed = role.phase === "failed";
-		statusDot.style.backgroundColor = isFailed ? "var(--error)" : isDone ? "var(--success)" : "#fbbf24";
-		if (isRunning) {
-			statusDot.style.animation = "pulse-dot 1.2s ease-in-out infinite";
-		} else if (isDone) {
-			statusDot.style.boxShadow = "0 0 6px var(--success-glow)";
-		}
-		const statusText = el("span");
-		statusText.textContent = isFailed ? "Failed" : isDone ? "Completed" : isRunning ? "Running" : role.phase;
-		statusText.style.color = isFailed ? "var(--error)" : isDone ? "var(--success)" : "#fbbf24";
-		statusWrap.append(statusDot, statusText);
-		header.append(icon, titleGroup, statusWrap);
-
-		// Meta row
-		const metaRow = el("div", "role-info-meta");
-		const phaseItem = el("span", "role-info-meta-item");
-		phaseItem.textContent = `Phase: ${role.phase}`;
-		metaRow.appendChild(phaseItem);
-
-		// Body
-		const body = el("div", "role-info-body");
-		body.textContent = role.fullOutput ?? role.preview ?? "(no output)";
-
-		panel.append(header, metaRow, body);
-		modal.appendChild(panel);
-
-		// Actions
-		const actions = el("div", "modal-actions");
-		const closeBtn = el("button", "primary-btn");
-		closeBtn.textContent = "Close";
-		closeBtn.onclick = () => backdrop.remove();
-		actions.appendChild(closeBtn);
-		modal.appendChild(actions);
-
-		backdrop.appendChild(modal);
-		document.body.appendChild(backdrop);
-
-		backdrop.addEventListener("click", (e) => {
-			if (e.target === backdrop) backdrop.remove();
-		});
-	}
+	// Reply entries map: id → { roomId, label, messages, preview }
+	const replyStore = new Map<
+		string,
+		{ roomId: string; label: string; preview: string; messages: unknown[]; roleName?: string }
+	>();
+	// Room → ordered reply IDs
+	const roomReplies = new Map<string, string[]>();
+	let activeReplyId: string | null = null;
 
 	function renderRoleSubRows(li: HTMLElement): void {
 		const existing = li.querySelector(".room-role-sub-rows");
 		if (existing) existing.remove();
 
-		if (activeRoles.length === 0) return;
+		const rows: Array<{ label: string; phase: string; onClick: () => void }> = [];
+
+		// Session model reply row
+		if (roomBusy && selectedRoomId) {
+			rows.push({
+				label: `[session] ${statusModelSuffix}`,
+				phase: "replying",
+				onClick: () => {
+					// Load current session messages from the latest reply store entry
+					if (sessionReplyId && replyStore.has(sessionReplyId)) {
+						const reply = replyStore.get(sessionReplyId)!;
+						renderHistory(reply.messages);
+					}
+				},
+			});
+		}
+
+		// Role sub-rows
+		for (const role of activeRoles) {
+			rows.push({
+				label: `[${role.roleName}] ${statusModelSuffix}`,
+				phase: role.phase === "started" ? "running" : role.phase,
+				onClick: () => {
+					const preview = role.fullOutput ?? role.preview ?? "";
+					if (preview) {
+						messages.innerHTML = "";
+						const div = el("div", "msg role");
+						const meta = el("div", "meta");
+						meta.textContent = `[${role.roleName}] ${role.phase === "done" ? "completed" : role.phase === "failed" ? "failed" : "running"}`;
+						div.appendChild(meta);
+						const body = el("div", "msg-body");
+						body.textContent = preview;
+						div.appendChild(body);
+						messages.appendChild(div);
+						scrollMessagesToBottom(true);
+					}
+				},
+			});
+		}
+
+		if (rows.length === 0) return;
 
 		const container = el("div", "room-role-sub-rows");
-		for (const role of activeRoles) {
+		for (const r of rows) {
 			const subRow = el("button", "room-role-sub-row");
 			subRow.type = "button";
 
-			const statusDot = el("span", `role-sub-dot ${role.phase}`);
-			const nameSpan = el("span", "role-sub-name");
-			nameSpan.textContent = role.roleName;
-			const phaseSpan = el("span", "role-sub-phase");
-			if (role.phase === "started") {
-				phaseSpan.textContent = "running…";
-			} else if (role.phase === "done") {
-				phaseSpan.textContent = "completed";
-			} else {
-				phaseSpan.textContent = role.phase;
-			}
+			const statusDot = el("span", `role-sub-dot ${r.phase}`);
+			const labelSpan = el("span", "role-sub-name");
+			labelSpan.textContent = r.label;
 
-			subRow.append(statusDot, nameSpan, phaseSpan);
-
-			subRow.classList.add("clickable");
+			subRow.append(statusDot, labelSpan);
 			subRow.onclick = (e) => {
 				e.stopPropagation();
-				showRoleOutputModal(role);
+				r.onClick();
 			};
-
 			container.appendChild(subRow);
 		}
 		li.appendChild(container);
 	}
+	/** Re-render only the reply rows under room rows. */
+	function updateRoomReplyRows(): void {
+		if (activeRoomLi) renderRoleSubRows(activeRoomLi);
+	}
+
 	let statusModelSuffix = "loading models…";
 	let availableModels: HubModelInfo[] = [];
 	let switchingModel = false;
@@ -1599,6 +1758,8 @@ function renderWorkspace(
 				return msg.detail ? `${host} · compacting (${msg.detail})` : `${host} is compacting context…`;
 			case "replying":
 				return `${host} is replying…`;
+			case "sleeping":
+				return msg.detail ? `Sleeping: ${msg.detail}` : "Sleeping…";
 			default:
 				return "";
 		}
@@ -1783,6 +1944,8 @@ function renderWorkspace(
 		if (current?.displayName) {
 			turnHostName = current.displayName;
 		}
+		roomBusy = current !== null || pending.length > 0;
+		updateSleepButton();
 		if (current) {
 			queueBar.textContent = `Running: ${current.displayName ?? "?"} · ${pending.length} queued`;
 		} else if (pending.length > 0) {
@@ -1850,6 +2013,10 @@ function renderWorkspace(
 		if (activeRoomLi) {
 			renderRoleSubRows(activeRoomLi);
 		}
+
+		// Update busy state: any started phase means roles are busy
+		rolesBusy = activeRoles.some((r) => r.phase === "started");
+		updateSleepButton();
 	}
 
 	function handleRoleOrchestration(msg: HubServerMessage): void {
@@ -1955,6 +2122,15 @@ function renderWorkspace(
 		if (event.type === "agent_end" && Array.isArray(event.messages)) {
 			renderHistory(event.messages);
 			updateTokenStats(event.messages);
+			// Store session reply for room list sub-row
+			sessionReplyId = `session-${Date.now()}`;
+			replyStore.set(sessionReplyId, {
+				roomId: selectedRoomId ?? "",
+				label: `[session] ${statusModelSuffix}`,
+				preview: getMessageText(event.messages[event.messages.length - 1] ?? "").slice(0, 60),
+				messages: event.messages,
+			});
+			updateRoomReplyRows();
 			setStreamingVisual(false);
 		}
 
@@ -2339,6 +2515,27 @@ function renderWorkspace(
 		handleActivityUpdate(msg);
 		handleRoleOrchestration(msg);
 		handleAgentEvent(msg);
+		if (msg.type === "sleep_progress") {
+			const phase = msg.phase as HubSleepPhase | undefined;
+			if (phase) {
+				sleepItem.textContent =
+					phase === "extracting" ? "Extracting…" : phase === "storing" ? "Storing…" : "Clearing…";
+				sleepItem.disabled = true;
+			}
+		}
+		if (msg.type === "sleep_done") {
+			isSleeping = false;
+			updateSleepButton();
+			const memories = (msg.memories as HubRoleMemory[]) ?? [];
+			const count = memories.length;
+			if (count > 0) {
+				const roles = [...new Set(memories.map((m) => m.roleName))];
+				showError(`Stored ${count} memories for roles: ${roles.join(", ")}`);
+			} else {
+				showError("No memories extracted from this session.");
+			}
+			// Messages are cleared server-side, client will receive updated state via joined or state_update
+		}
 		if (msg.type === "extension_ui_request") {
 			showExtensionModal(msg);
 		}

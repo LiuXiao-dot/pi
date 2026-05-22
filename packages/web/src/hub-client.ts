@@ -4,6 +4,7 @@ import type {
 	HubModelInfo,
 	HubModelsConfigPayload,
 	HubRoleContentPayload,
+	HubRoleMemory,
 	HubRoleSummaryPayload,
 	HubRoomConfigPayload,
 	HubRoomSummary,
@@ -375,6 +376,40 @@ export class HubClient {
 			type: "clear_room_session",
 			token: this.token,
 			roomId,
+		});
+	}
+
+	async sleepRoom(roomId: string): Promise<void> {
+		await this.sendCommand({
+			type: "sleep_room",
+			token: this.token,
+			roomId,
+		});
+	}
+
+	async getRoleMemory(roleName: string): Promise<HubRoleMemory[]> {
+		const data = await this.sendCommand<{ memories: HubRoleMemory[] }>({
+			type: "get_role_memory",
+			token: this.token,
+			roleName,
+		});
+		return data.memories ?? [];
+	}
+
+	async deleteRoleMemory(roleName: string, seq: number): Promise<void> {
+		await this.sendCommand({
+			type: "delete_role_memory",
+			token: this.token,
+			roleName,
+			seq,
+		});
+	}
+
+	async clearRoleMemory(roleName: string): Promise<void> {
+		await this.sendCommand({
+			type: "clear_role_memory",
+			token: this.token,
+			roleName,
 		});
 	}
 

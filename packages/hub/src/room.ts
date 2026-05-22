@@ -643,4 +643,9 @@ export class Room {
 			});
 		}
 	}
+
+	/** Broadcast a hub server message to all clients in the room. */
+	broadcastMessage(message: HubServerMessage): void {
+		this.broadcast(message);
+	}
 }

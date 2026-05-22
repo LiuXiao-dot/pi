@@ -16,7 +16,7 @@ export interface HubSessionState {
 	[key: string]: unknown;
 }
 
-export type HubActivityPhase = "idle" | "replying" | "thinking" | "tool" | "compacting";
+export type HubActivityPhase = "idle" | "replying" | "thinking" | "tool" | "compacting" | "sleeping";
 
 export interface HubActivityUpdateMessage extends HubServerMessage {
 	type: "activity_update";
@@ -142,4 +142,33 @@ export interface HubSkillSummary {
 	name: string;
 	source: "user" | "project";
 	description?: string;
+}
+
+export type HubSleepPhase = "extracting" | "storing" | "clearing";
+
+export interface HubSleepProgressMessage extends HubServerMessage {
+	type: "sleep_progress";
+	roomId: string;
+	phase: HubSleepPhase;
+}
+
+export interface HubSleepDoneMessage extends HubServerMessage {
+	type: "sleep_done";
+	roomId: string;
+	memories: HubRoleMemory[];
+}
+
+export interface HubRoleMemory {
+	roleName: string;
+	seq: number;
+	ts: string;
+	room: string;
+	goal: string;
+	result: string;
+}
+
+export interface HubActivityStreamMessage extends HubServerMessage {
+	type: "activity_stream";
+	role?: string;
+	content: string;
 }

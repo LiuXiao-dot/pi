@@ -78,7 +78,11 @@ export type HubScopedClientMessage =
 	| { type: "set_room_roles"; token: string; roomId: string; roleNames: string[]; id?: string }
 	| { type: "list_skills"; token: string; id?: string }
 	| { type: "get_skill_content"; token: string; name: string; id?: string }
-	| { type: "clear_room_session"; token: string; roomId: string; id?: string };
+	| { type: "clear_room_session"; token: string; roomId: string; id?: string }
+	| { type: "sleep_room"; token: string; roomId: string; id?: string }
+	| { type: "get_role_memory"; token: string; roleName: string; id?: string }
+	| { type: "delete_role_memory"; token: string; roleName: string; seq: number; id?: string }
+	| { type: "clear_role_memory"; token: string; roleName: string; id?: string };
 
 export function isHubScopedMessage(message: HubClientMessage): message is HubScopedClientMessage {
 	return (
@@ -96,7 +100,11 @@ export function isHubScopedMessage(message: HubClientMessage): message is HubSco
 		message.type === "set_room_roles" ||
 		message.type === "list_skills" ||
 		message.type === "get_skill_content" ||
-		message.type === "clear_room_session"
+		message.type === "clear_room_session" ||
+		message.type === "sleep_room" ||
+		message.type === "get_role_memory" ||
+		message.type === "delete_role_memory" ||
+		message.type === "clear_role_memory"
 	);
 }
 
@@ -163,7 +171,7 @@ export interface HubLeft {
 	roomId: string;
 }
 
-export type HubActivityPhase = "idle" | "replying" | "thinking" | "tool" | "compacting";
+export type HubActivityPhase = "idle" | "replying" | "thinking" | "tool" | "compacting" | "sleeping";
 
 export interface HubActivityUpdate {
 	type: "activity_update";
@@ -333,6 +341,29 @@ export interface HubSkillContent {
 	content: string;
 }
 
+export type HubSleepPhase = "extracting" | "storing" | "clearing";
+
+export interface HubSleepProgressMessage {
+	type: "sleep_progress";
+	roomId: string;
+	phase: HubSleepPhase;
+}
+
+export interface HubSleepDoneMessage {
+	type: "sleep_done";
+	roomId: string;
+	memories: HubRoleMemory[];
+}
+
+export interface HubRoleMemory {
+	seq: number;
+	ts: string;
+	room: string;
+	goal: string;
+	result: string;
+	roleName: string;
+}
+
 export type HubExtensionUIOutbound = HubExtensionUIRequest & {
 	targetClientId: string | null;
 	waitingForDisplayName?: string;
@@ -353,4 +384,6 @@ export type HubServerMessage =
 	| HubRoleGap
 	| HubRoomsList
 	| HubRoomDeleted
+	| HubSleepProgressMessage
+	| HubSleepDoneMessage
 	| HubError;

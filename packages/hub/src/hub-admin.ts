@@ -2,6 +2,12 @@ import type { WebSocket } from "ws";
 import type { ResolvedHubRolesConfig } from "./config.ts";
 import type { HubCommandResult, HubRoomConfigPayload, HubScopedClientMessage } from "./protocol.ts";
 import {
+	appendRoleMemory,
+	clearRoleMemory as clearRoleMemoryStore,
+	deleteRoleMemory,
+	loadRoleMemory,
+} from "./roles/memory-store.ts";
+import {
 	deleteRoleFile,
 	getRoleContent,
 	listRoleSummaries,
@@ -96,6 +102,18 @@ export class HubAdmin {
 					return;
 				case "clear_room_session":
 					await this.handleClearRoomSession(ws, message.roomId, message.id);
+					return;
+				case "sleep_room":
+					await this.handleSleepRoom(ws, message.roomId, message.id);
+					return;
+				case "get_role_memory":
+					await this.handleGetRoleMemory(ws, message.roleName, message.id);
+					return;
+				case "delete_role_memory":
+					await this.handleDeleteRoleMemory(ws, message.roleName, message.seq, message.id);
+					return;
+				case "clear_role_memory":
+					await this.handleClearRoleMemory(ws, message.roleName, message.id);
 					return;
 			}
 		} catch (err) {
@@ -255,6 +273,95 @@ export class HubAdmin {
 		// Notify all clients in the room with empty messages
 		room.sendClientUpdate();
 		this.sendCommandResult(ws, "clear_room_session", id, true);
+	}
+
+	private async handleSleepRoom(ws: WebSocket, roomId: string, id?: string): Promise<void> {
+		const room = this.options.roomManager.getActiveRoom(roomId);
+		if (!room) {
+			this.sendCommandResult(ws, "sleep_room", id, false, `Room "${roomId}" not active`);
+			return;
+		}
+
+		const messages = room.session.messages;
+		const extracted: Array<{ ts: string; room: string; goal: string; result: string; roleName: string }> = [];
+
+		// Phase 1: extracting
+		room.broadcastMessage({ type: "sleep_progress", roomId, phase: "extracting" });
+
+		// Find hub_role_output custom messages grouped by role
+		for (const msg of messages) {
+			if (msg.role !== "custom") continue;
+			const cm = msg as { customType?: string; content?: string; details?: Record<string, unknown> };
+			if (cm.customType !== "hub_role_output" || !cm.details?.role) continue;
+			const roleName = cm.details.role as string;
+			const output = (cm.content as string) ?? "";
+			if (!output.trim()) continue;
+
+			const goalLine = output.match(/Task:\s*(.+?)(?:\n|$)/);
+			const goal = goalLine?.[1]?.trim() ?? output.slice(0, 80);
+			const resultMatch = output.match(/(?:completed|failed)[\s\S]*/i);
+			const result = resultMatch?.[0]?.trim() ?? output.slice(-200);
+
+			extracted.push({ ts: new Date().toISOString(), room: roomId, goal, result, roleName });
+		}
+
+		// Phase 2: storing
+		room.broadcastMessage({ type: "sleep_progress", roomId, phase: "storing" });
+
+		// Group by role and deduplicate by goal, then store
+		const byRole = new Map<string, typeof extracted>();
+		for (const e of extracted) {
+			if (!byRole.has(e.roleName)) byRole.set(e.roleName, []);
+			byRole.get(e.roleName)!.push(e);
+		}
+
+		const allStored: Array<{
+			seq: number;
+			ts: string;
+			room: string;
+			goal: string;
+			result: string;
+			roleName: string;
+		}> = [];
+		const seenPerRole = new Map<string, Set<string>>();
+
+		for (const [roleName, items] of byRole) {
+			if (!seenPerRole.has(roleName)) seenPerRole.set(roleName, new Set());
+			const seen = seenPerRole.get(roleName)!;
+			const unique = items.filter((m) => {
+				if (seen.has(m.goal)) return false;
+				seen.add(m.goal);
+				return true;
+			});
+			appendRoleMemory(this.options.cwd, roleName, unique);
+			const fresh = loadRoleMemory(this.options.cwd, roleName);
+			allStored.push(...fresh.slice(-unique.length));
+		}
+
+		// Phase 3: clearing
+		room.broadcastMessage({ type: "sleep_progress", roomId, phase: "clearing" });
+		room.session.agent.reset();
+		room.session.sessionManager.newSession();
+		room.sendClientUpdate();
+
+		// Done
+		this.sendCommandResult(ws, "sleep_room", id, true, undefined, { roomId, memories: allStored });
+		room.broadcastMessage({ type: "sleep_done", roomId, memories: allStored });
+	}
+
+	private handleGetRoleMemory(ws: WebSocket, roleName: string, id?: string): void {
+		const memories = loadRoleMemory(this.options.cwd, roleName);
+		this.sendCommandResult(ws, "get_role_memory", id, true, undefined, { memories });
+	}
+
+	private handleDeleteRoleMemory(ws: WebSocket, roleName: string, seq: number, id?: string): void {
+		deleteRoleMemory(this.options.cwd, roleName, seq);
+		this.sendCommandResult(ws, "delete_role_memory", id, true);
+	}
+
+	private handleClearRoleMemory(ws: WebSocket, roleName: string, id?: string): void {
+		clearRoleMemoryStore(this.options.cwd, roleName);
+		this.sendCommandResult(ws, "clear_role_memory", id, true);
 	}
 
 	private send(ws: WebSocket, message: object): void {
