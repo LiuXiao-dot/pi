@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- Marvis-inspired light theme overlay (`theme-marvis.css`) with single accent color, capsule controls, soft shadows, and modal scale-in animation. Active by default via `body.theme-marvis`; falls back cleanly when removed.
+- Office (“Marvis 办公室”) modal showing the room's role roster on an isometric SVG workstation grid plus a stats side panel (active / available / rooms). Opened from a new `Office` button in the workspace header.
+- Redesign audit at `packages/web/docs/marvis-redesign.md` documenting gaps versus the Marvis reference and what shipped.
+
 ### Changed
 
 - Web UI workspace layout: sign-in only on the login page; after login, room list and chat share one screen (switch rooms without leaving chat).

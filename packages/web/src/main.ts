@@ -1,5 +1,6 @@
 import { type MentionTarget, setupMentionComposer } from "./composer-mentions.ts";
 import { defaultWsUrl, HubClient } from "./hub-client.ts";
+import { showOfficeModal } from "./office-view.ts";
 import type {
 	HubActivityUpdateMessage,
 	HubModelInfo,
@@ -270,13 +271,23 @@ function renderWorkspace(
 	rolesBtn.onclick = () => showRoleLibraryModal();
 	topHeader.appendChild(rolesBtn);
 
+	const officeBtn = el("button", "secondary-btn");
+	officeBtn.type = "button";
+	officeBtn.textContent = "Office";
+	officeBtn.title = "Marvis 办公室 — view this room's role roster";
+	officeBtn.onclick = () => {
+		if (!selectedRoomId) return;
+		void showOfficeModal(client, selectedRoomId);
+	};
+	topHeader.appendChild(officeBtn);
+
 	const user = el("span", "workspace-user");
 	user.textContent = session.displayName;
 	const signOutBtn = el("button", "secondary-btn");
 	signOutBtn.type = "button";
 	signOutBtn.textContent = "Sign out";
 	signOutBtn.onclick = () => onSignOut();
-	topHeader.append(brand, rolesBtn, user, signOutBtn);
+	topHeader.append(brand, rolesBtn, officeBtn, user, signOutBtn);
 	shell.appendChild(topHeader);
 
 	const body = el("div", "workspace-layout");
