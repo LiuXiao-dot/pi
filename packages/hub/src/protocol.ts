@@ -380,6 +380,28 @@ export interface HubRoleMemory {
 	roleName: string;
 }
 
+/**
+ * Sent to the room when a prompt/steer/follow_up message contained @mention tokens
+ * that did not match any room-assigned role or any present user. The message itself
+ * is still processed (falls through to the room's default agent), but clients
+ * should surface this so users notice misspelt or not-yet-assigned roles.
+ */
+export interface HubMentionWarning {
+	type: "mention_warning";
+	roomId: string;
+	/** ID of the originating client message (prompt/steer/follow_up id), if any. */
+	requestId?: string;
+	command: "prompt" | "steer" | "follow_up";
+	/** Tokens (without leading @) that matched neither a role nor a user, deduped, original casing. */
+	unknown: string[];
+	/** Roles that did resolve, for context. */
+	resolvedRoles: string[];
+	/** Users that did resolve, for context. */
+	resolvedUsers: string[];
+	/** Display name of the sender, if known. */
+	fromDisplayName?: string;
+}
+
 export type HubExtensionUIOutbound = HubExtensionUIRequest & {
 	targetClientId: string | null;
 	waitingForDisplayName?: string;
@@ -403,4 +425,5 @@ export type HubServerMessage =
 	| HubSleepProgressMessage
 	| HubSleepDoneMessage
 	| HubRoomSessionCleared
+	| HubMentionWarning
 	| HubError;

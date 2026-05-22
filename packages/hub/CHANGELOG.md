@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- WebSocket `leave` + re-`join` on the same connection (room switch) no longer stacks `close` listeners on the socket, which triggered Node `MaxListenersExceededWarning` after several room changes.
 - Prompt queue failures are broadcast to connected clients as `error` events instead of failing silently in the server log only.
 - Image attachments with empty or invalid MIME types are normalized from base64 bytes before calling the model (JPEG/PNG/GIF/WebP only).
 - `appendRoleMemory` now allocates `seq` as `max(existing seq) + 1` instead of `existing.length`, so deleting a memory no longer makes the next append collide with another row's seq.
@@ -19,6 +20,7 @@
 
 ### Added
 
+- Unknown `@mention` warning: when a `prompt`/`steer`/`follow_up` message contains `@token` that matches neither a room-assigned role nor a presently-connected user, the hub now broadcasts a `mention_warning` server message to the room (with the unresolved tokens, the resolved roles/users, and the sender display name). Previously such mentions were silently dropped and the message fell through to the default agent with no indication, making typos and not-yet-assigned roles invisible. Both `steer` and `follow_up` now also parse mentions for warning purposes (they still don't trigger orchestrator routing — that remains `prompt`-only). `resolveMentions` / `resolveMessageMentions` return type extended with `unknown: string[]` (deduped, original casing).
 - Per-task role cancellation: new `abort_task` client message lets a client cancel a single in-flight role subprocess by `taskId` without aborting the rest of the room. `RoleOrchestrator` now tracks an `AbortController` per task and exposes `abortTask(taskId)`. The room-wide `abort` still cancels everything (parent signal is linked to each task).
 - Persisted role memories are now read back into the role's run context: `runRoleSubprocess` injects up to N most-recent memories (default 10) into `contextPrefix`, so sleeping a room actually makes future role runs aware of past goals/results. New helper `loadRecentRoleMemory(cwd, name, limit)`.
 - New protocol message `room_session_cleared` broadcast after rebirth and sleep so every client (not just the initiator) drops local reply / turn indices for the cleared session.

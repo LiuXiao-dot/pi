@@ -3,7 +3,7 @@ import type { WebSocket } from "ws";
 import type { ResolvedHubModelsConfig, ResolvedHubRolesConfig } from "./config.ts";
 import { ExtensionUiRouter } from "./extension-ui.ts";
 import { normalizeImageAttachments } from "./image-mime.ts";
-import { resolveMessageMentions } from "./mentions.ts";
+import { type ResolvedMentions, resolveMessageMentions } from "./mentions.ts";
 import { listHubModels } from "./model-info.ts";
 import {
 	applyRoleModelOverrides,
@@ -19,6 +19,7 @@ import type {
 	HubCommandResult,
 	HubExtensionUIOutbound,
 	HubExtensionUIRequest,
+	HubMentionWarning,
 	HubPresenceMember,
 	HubPresenceUpdate,
 	HubQueueUpdate,
@@ -142,6 +143,33 @@ export class Room {
 
 	private broadcastRoleEvent(message: HubRolePlan | HubRoleGap | HubRoleProgress): void {
 		this.broadcast(message);
+	}
+
+	/**
+	 * If the user typed @tokens that don't resolve to any room role or present user,
+	 * broadcast a warning so all room members see it. Falls through silently when
+	 * every mention resolved (or the message had no mentions at all).
+	 */
+	private broadcastMentionWarning(
+		command: HubMentionWarning["command"],
+		requestId: string | undefined,
+		mentions: ResolvedMentions,
+		fromDisplayName: string | undefined,
+	): void {
+		if (mentions.unknown.length === 0) {
+			return;
+		}
+		const warning: HubMentionWarning = {
+			type: "mention_warning",
+			roomId: this.roomId,
+			requestId,
+			command,
+			unknown: mentions.unknown,
+			resolvedRoles: mentions.roles,
+			resolvedUsers: mentions.users,
+			fromDisplayName,
+		};
+		this.broadcast(warning);
 	}
 
 	async listCatalogModels() {
@@ -301,6 +329,7 @@ export class Room {
 					roleNames: this.roomConfig.roleNames ?? [],
 					userNames: this.getPresenceDisplayNames(),
 				});
+				this.broadcastMentionWarning("prompt", message.id, mentions, client.displayName);
 				const result = this.queue.enqueue({
 					command: "prompt",
 					clientId: client.id,
@@ -328,6 +357,15 @@ export class Room {
 					);
 					return;
 				}
+				this.broadcastMentionWarning(
+					"steer",
+					message.id,
+					resolveMessageMentions(message.message, {
+						roleNames: this.roomConfig.roleNames ?? [],
+						userNames: this.getPresenceDisplayNames(),
+					}),
+					client.displayName,
+				);
 				const result = this.queue.enqueue({
 					command: "steer",
 					clientId: client.id,
@@ -352,6 +390,15 @@ export class Room {
 					);
 					return;
 				}
+				this.broadcastMentionWarning(
+					"follow_up",
+					message.id,
+					resolveMessageMentions(message.message, {
+						roleNames: this.roomConfig.roleNames ?? [],
+						userNames: this.getPresenceDisplayNames(),
+					}),
+					client.displayName,
+				);
 				const result = this.queue.enqueue({
 					command: "follow_up",
 					clientId: client.id,

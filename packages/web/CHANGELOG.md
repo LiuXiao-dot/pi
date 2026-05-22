@@ -4,6 +4,7 @@
 
 ### Added
 
+- Surfaces hub `mention_warning` broadcasts: when a sent message contains `@token` that doesn't match any room-assigned role or present user, the chat shows an info banner like `未识别的提及 @web-ui（已识别角色: pm）` so users notice typos / not-yet-assigned roles instead of silently being routed to the default agent.
 - Per-role-task cancel: swiping a role reply card in the room sidebar now actually cancels that single role subprocess (sends new `abort_task` message with `taskId`). Previously the swipe-to-cancel UI showed up on role cards but the click did nothing. Session replies still use the room-wide `abort`.
 - Marvis-inspired light theme is now the default palette in `style.css`: near-white surface (`#FAFAFA`), near-black text, single Marvis red-orange accent, capsule controls, and soft shadows. The previous dark palette is preserved under `body.theme-dark`.
 - Hero landing state shown when a room has no messages: centered brand mark, title, sub-line, and a 6-card suggested-task grid that fills the composer with a starter prompt on click. Hover lifts cards 2px and fades in a right-arrow.

@@ -14,16 +14,25 @@ export function extractMentionTokens(text: string): string[] {
 	return tokens;
 }
 
+export interface ResolvedMentions {
+	roles: string[];
+	users: string[];
+	/** Tokens that matched neither a room role nor a presence user (preserves original casing, deduped). */
+	unknown: string[];
+}
+
 export function resolveMentions(
 	tokens: string[],
 	options: { roleNames: string[]; userNames: string[] },
-): { roles: string[]; users: string[] } {
+): ResolvedMentions {
 	const roleLookup = new Map(options.roleNames.map((r) => [r.toLowerCase(), r]));
 	const userLookup = new Map(options.userNames.map((u) => [u.toLowerCase(), u]));
 	const roles: string[] = [];
 	const users: string[] = [];
+	const unknown: string[] = [];
 	const seenRoles = new Set<string>();
 	const seenUsers = new Set<string>();
+	const seenUnknown = new Set<string>();
 
 	for (const token of tokens) {
 		const key = token.toLowerCase();
@@ -37,16 +46,21 @@ export function resolveMentions(
 		if (user && !seenUsers.has(user)) {
 			seenUsers.add(user);
 			users.push(user);
+			continue;
+		}
+		if (!role && !user && !seenUnknown.has(key)) {
+			seenUnknown.add(key);
+			unknown.push(token);
 		}
 	}
 
-	return { roles, users };
+	return { roles, users, unknown };
 }
 
 export function resolveMessageMentions(
 	text: string,
 	options: { roleNames: string[]; userNames: string[] },
-): { roles: string[]; users: string[] } {
+): ResolvedMentions {
 	return resolveMentions(extractMentionTokens(text), options);
 }
 

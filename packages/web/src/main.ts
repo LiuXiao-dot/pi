@@ -3381,6 +3381,29 @@ function renderWorkspace(
 			}
 			// Messages are cleared server-side; clients will receive joined + room_session_cleared.
 		}
+		if (msg.type === "mention_warning") {
+			const payload = msg as {
+				roomId?: string;
+				unknown?: string[];
+				resolvedRoles?: string[];
+				fromDisplayName?: string;
+			};
+			const rid = payload.roomId;
+			if (rid && rid !== selectedRoomId) {
+				// Different room; ignore.
+			} else {
+				const unknown = payload.unknown ?? [];
+				if (unknown.length > 0) {
+					const tokens = unknown.map((t) => `@${t}`).join(", ");
+					const who = payload.fromDisplayName ? `${payload.fromDisplayName}: ` : "";
+					const tail =
+						payload.resolvedRoles && payload.resolvedRoles.length > 0
+							? `（已识别角色: ${payload.resolvedRoles.join(", ")}）`
+							: "（无角色被触发，已按默认 agent 处理）";
+					showInfo(`${who}未识别的提及 ${tokens}${tail}`);
+				}
+			}
+		}
 		if (msg.type === "room_session_cleared") {
 			const rid = (msg as { roomId?: string }).roomId;
 			if (rid) {
